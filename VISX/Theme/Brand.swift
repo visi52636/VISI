@@ -9,7 +9,7 @@ enum Brand {
     static let appName = "VIS X"
 
     /// Highlight colour: selected states, pins, underlines. Comes from the AccentColor asset.
-    static let accent = Color.accentColor
+    static let accent = Color("AccentColor") // read the asset directly; Color.accentColor follows .tint()
 
     static let background = Color.black
     static let surface = Color(white: 0.07)
