@@ -48,7 +48,9 @@ struct ProjectView: View {
                                message: "This project may have been deleted.")
             }
         }
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .background(Brand.background.ignoresSafeArea())
         .toolbar { toolbar }
         .photosPicker(isPresented: $showingPhotoPicker, selection: $photoSelection,
                       maxSelectionCount: allowsMultipleSelection ? nil : 1, matching: .images)
@@ -90,16 +92,11 @@ struct ProjectView: View {
 
     private func content(for project: Project) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !project.subtitle.isEmpty {
-                Text(project.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
-            }
+            hero(for: project)
             UnderlineTabs(items: Section.allCases, selection: $section) { $0.title }
-                .padding(.horizontal)
-                .padding(.top, 12)
-            Divider()
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+            Rectangle().fill(Brand.hairline).frame(height: 0.5)
 
             switch section {
             case .tour:
@@ -120,13 +117,49 @@ struct ProjectView: View {
                 }
             }
         }
-        .navigationTitle(project.name)
+        .ignoresSafeArea(edges: .top)
         .onAppear {
             if selectedFloorID == nil || project.floor(selectedFloorID!) == nil {
                 selectedFloorID = project.floors.first?.id
             }
             applyLaunchScreen(project)
         }
+    }
+
+    /// Cover image under the (transparent) navigation bar with the project name set over it.
+    private func hero(for project: Project) -> some View {
+        Color.clear
+            .frame(height: section == .tour ? 210 : 280)
+            .frame(maxWidth: .infinity)
+            .background {
+                if let cover = project.coverFileName {
+                    ThumbnailView(url: store.fileURL(cover, in: project.id))
+                } else {
+                    LinearGradient(colors: [Brand.surfaceRaised, Brand.background], startPoint: .top, endPoint: .bottom)
+                }
+            }
+            .overlay { ImageScrim(strength: 1) }
+            .overlay(alignment: .top) {
+                // Keeps the status bar and navigation buttons legible over bright images.
+                LinearGradient(colors: [.black.opacity(0.55), .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 110)
+            }
+            .overlay(alignment: .bottomLeading) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !project.subtitle.isEmpty {
+                        Eyebrow(project.subtitle, color: Brand.textPrimary.opacity(0.75), size: 10)
+                    }
+                    Text(project.name)
+                        .font(.display(34))
+                        .foregroundStyle(Brand.textPrimary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.7)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
+            }
+            .clipped()
+            .animation(.easeInOut(duration: 0.25), value: section)
     }
 
     @ToolbarContentBuilder

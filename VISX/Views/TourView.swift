@@ -38,7 +38,7 @@ struct TourView: View {
                                message: isEditing ? "Add a floor to start building the tour." : "This project has no 360° tour yet.") {
                     if isEditing {
                         Button("Add Floor") { showingAddFloor = true }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.primary)
                     }
                 }
             }
@@ -112,18 +112,19 @@ struct TourView: View {
                 }
                 if isEditing {
                     Button { showingAddFloor = true } label: {
-                        Label("Floor", systemImage: "plus")
-                            .font(.subheadline)
+                        Label("FLOOR", systemImage: "plus")
+                            .font(.system(size: 11, weight: .medium))
+                            .tracking(1.6)
                             .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .overlay(Capsule().strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 9)
+                            .overlay(Capsule().strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+                            .foregroundStyle(Brand.textTertiary)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
     }
 
@@ -169,7 +170,7 @@ struct TourView: View {
                     onPinMoved: { room, point in store.setPosition(point, for: room.id, in: project.id) }
                 )
             }
-            .background(Color(.systemGroupedBackground))
+            .background(Brand.background)
             if isEditing || !rooms.isEmpty {
                 roomStrip(rooms, floor: floor, hasPlan: true)
             }
@@ -199,11 +200,11 @@ struct TourView: View {
 
     private func roomStrip(_ rooms: [Panorama], floor: Floor, hasPlan: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Divider()
+            Rectangle().fill(Brand.hairline).frame(height: 0.5)
             if isEditing && hasPlan && !rooms.isEmpty {
                 Text(placementHint(rooms))
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.textSecondary)
                     .padding(.horizontal)
                     .padding(.top, 10)
             }
@@ -222,7 +223,7 @@ struct TourView: View {
                                 Image(systemName: "mappin.slash")
                                     .font(.caption2.weight(.semibold))
                                     .padding(5)
-                                    .background(.regularMaterial, in: Circle())
+                                    .background(.black.opacity(0.7), in: Circle())
                                     .padding(5)
                             }
                         }
@@ -241,7 +242,7 @@ struct TourView: View {
                 .padding()
             }
         }
-        .background(Color(.systemBackground))
+        .background(Brand.surface)
     }
 
     @ViewBuilder

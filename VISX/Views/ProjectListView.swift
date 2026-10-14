@@ -13,28 +13,31 @@ struct ProjectListView: View {
     @State private var errorMessage: String?
     @State private var isLoadingSample = false
 
-    private let columns = [GridItem(.adaptive(minimum: 300), spacing: 20)]
+    private let columns = [GridItem(.adaptive(minimum: 320), spacing: 20)]
 
     var body: some View {
         NavigationStack(path: $path) {
             Group {
                 if store.projects.isEmpty {
-                    EmptyStateView(
+                    VStack(spacing: 0) {
+                        header
+                        EmptyStateView(
                         systemImage: "building.2",
                         title: "No projects yet",
                         message: "Create a project to add floor plans, 360° views, drawings and renders. Projects shared with you open here too."
                     ) {
                         VStack(spacing: 12) {
                             Button("New Project") { startNewProject() }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(.primary)
                             Button("Try Sample Project") { loadSample() }
-                                .buttonStyle(.bordered)
+                                .buttonStyle(.secondary)
                         }
-                        .controlSize(.large)
+                        }
                     }
                 } else {
                     ScrollView {
-                        LazyVGrid(columns: columns, spacing: 28) {
+                        header
+                        LazyVGrid(columns: columns, spacing: 20) {
                             ForEach(store.projects) { project in
                                 NavigationLink(value: project.id) {
                                     ProjectCard(project: project)
@@ -46,28 +49,15 @@ struct ProjectListView: View {
                                 }
                             }
                         }
-                        .padding(20)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 32)
                     }
                 }
             }
-            .navigationTitle("Projects")
+            .background(Brand.background.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Project.ID.self) { id in
                 ProjectView(projectID: id)
-            }
-            .toolbar {
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    Button { showingImporter = true } label: {
-                        Label("Open Shared Project", systemImage: "tray.and.arrow.down")
-                    }
-                    Menu {
-                        Button { startNewProject() } label: { Label("New Project", systemImage: "plus") }
-                        Button { loadSample() } label: { Label("Add Sample Project", systemImage: "sparkles") }
-                    } label: {
-                        Label("New Project", systemImage: "plus")
-                    } primaryAction: {
-                        startNewProject()
-                    }
-                }
             }
             .alert("New Project", isPresented: $showingNewProject) {
                 TextField("Name", text: $newName)
@@ -121,6 +111,42 @@ struct ProjectListView: View {
         }
     }
 
+    /// Studio wordmark with the app's actions; replaces the standard navigation bar.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            HStack(alignment: .center) {
+                BrandMark(height: 24)
+                Spacer()
+                Button { showingImporter = true } label: {
+                    Image(systemName: "tray.and.arrow.down")
+                        .font(.system(size: 17, weight: .light))
+                        .frame(width: 40, height: 40)
+                }
+                .accessibilityLabel("Open Shared Project")
+                Menu {
+                    Button { startNewProject() } label: { Label("New Project", systemImage: "plus") }
+                    Button { loadSample() } label: { Label("Add Sample Project", systemImage: "sparkles") }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 19, weight: .light))
+                        .frame(width: 40, height: 40)
+                } primaryAction: {
+                    startNewProject()
+                }
+                .accessibilityLabel("New Project")
+            }
+            .foregroundStyle(Brand.textPrimary)
+            HStack(alignment: .firstTextBaseline) {
+                Eyebrow("Projects")
+                Spacer()
+                Eyebrow(Brand.appName, color: Brand.textTertiary)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 18)
+    }
+
     private func startNewProject() {
         newName = ""
         newSubtitle = ""
@@ -154,31 +180,35 @@ private struct ProjectCard: View {
     let project: Project
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ThumbnailView(url: project.coverFileName.map { store.fileURL($0, in: project.id) })
-                .aspectRatio(16 / 10, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(project.name)
-                    .font(.headline)
-                if !project.subtitle.isEmpty {
-                    Text(project.subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+        ThumbnailView(url: project.coverFileName.map { store.fileURL($0, in: project.id) })
+            .aspectRatio(4 / 5, contentMode: .fit)
+            .overlay { ImageScrim() }
+            .overlay(alignment: .bottomLeading) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !project.subtitle.isEmpty {
+                        Eyebrow(project.subtitle, color: Brand.textPrimary.opacity(0.75), size: 10)
+                    }
+                    Text(project.name)
+                        .font(.display(32))
+                        .foregroundStyle(Brand.textPrimary)
+                        .lineLimit(2)
+                    HStack(spacing: 6) {
+                        Rectangle().fill(Brand.accent).frame(width: 18, height: 1.5)
+                        Eyebrow(summary, color: Brand.textSecondary, size: 9.5)
+                    }
+                    .padding(.top, 2)
                 }
-                Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                .padding(22)
             }
-        }
-        .contentShape(Rectangle())
+            .clipShape(RoundedRectangle(cornerRadius: Brand.cornerRadius, style: .continuous))
+            .contentShape(Rectangle())
     }
 
     private var summary: String {
         func count(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
         return [
             count(project.floors.count, "floor"),
-            count(project.panoramas.count, "360° view"),
+            count(project.panoramas.count, "view"),
             count(project.documents.count, "file")
         ].joined(separator: " · ")
     }

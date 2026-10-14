@@ -17,6 +17,8 @@ struct VISXApp: App {
         WindowGroup {
             ProjectListView()
                 .environmentObject(store)
+                .preferredColorScheme(.dark)
+                .tint(.white)
                 .onOpenURL { url in
                     // Called when a .visx file is opened from AirDrop, Messages, Mail or Files.
                     do {

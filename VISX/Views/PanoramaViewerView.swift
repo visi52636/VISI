@@ -112,19 +112,23 @@ struct PanoramaViewerView: View {
             HStack(alignment: .center, spacing: 12) {
                 RoundButton(systemImage: "xmark") { dismiss() }
                 Spacer(minLength: 0)
-                VStack(spacing: 1) {
-                    Text(current?.title ?? "")
-                        .font(.subheadline.weight(.semibold))
+                VStack(spacing: 3) {
+                    Text((current?.title ?? "").uppercased())
+                        .font(.system(size: 13, weight: .medium))
+                        .tracking(2.2)
                     if let floor = current.flatMap({ project?.floor($0.floorID) }) {
-                        Text(floor.name)
-                            .font(.caption)
-                            .opacity(0.7)
+                        Text(floor.name.uppercased())
+                            .font(.system(size: 9, weight: .medium))
+                            .tracking(1.8)
+                            .foregroundStyle(Brand.accent)
                     }
                 }
                 .foregroundStyle(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(.black.opacity(0.35), in: Capsule())
+                .lineLimit(1)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 9)
+                .background(.black.opacity(0.45), in: Capsule())
+                .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 0.5))
                 Spacer(minLength: 0)
                 RoundButton(systemImage: motionEnabled ? "iphone.radiowaves.left.and.right" : "iphone",
                             isActive: motionEnabled) {
@@ -181,18 +185,19 @@ struct PanoramaViewerView: View {
                 .multilineTextAlignment(.center)
             HStack(spacing: 12) {
                 Button("Cancel") { isPlacingLink = false }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.secondary)
                 Button("Link Here") {
                     pendingDirection = sceneController.currentDirection()
                     showingLinkPicker = pendingDirection != nil
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.primary)
             }
-            .controlSize(.large)
         }
         .padding(20)
         .frame(maxWidth: 420)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .foregroundStyle(Brand.textPrimary)
+        .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 0.5))
         .padding()
     }
 
@@ -248,10 +253,11 @@ struct RoundButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 17, weight: .medium))
+                .font(.system(size: 17, weight: .light))
                 .frame(width: 46, height: 46)
                 .foregroundStyle(isActive ? Color.black : Color.white)
-                .background(isActive ? AnyShapeStyle(Color.white) : AnyShapeStyle(Color.black.opacity(0.35)), in: Circle())
+                .background(isActive ? Color.white : Color.black.opacity(0.45), in: Circle())
+                .overlay(Circle().strokeBorder(isActive ? Color.clear : Brand.hairline, lineWidth: 0.5))
         }
     }
 }
@@ -283,21 +289,21 @@ struct TourMiniMap: View {
                         HStack(spacing: 6) {
                             ForEach(floorsWithPlans) { floor in
                                 Button { shownFloorID = floor.id } label: {
-                                    Text(floor.name)
-                                        .font(.caption.weight(floor.id == shownFloor?.id ? .semibold : .regular))
+                                    Text(floor.name.uppercased())
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .tracking(1.2)
                                         .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .foregroundStyle(floor.id == shownFloor?.id ? Color.white : Color.primary)
-                                        .background(floor.id == shownFloor?.id ? Color.black : Color(.secondarySystemFill), in: Capsule())
+                                        .padding(.vertical, 6)
+                                        .foregroundStyle(floor.id == shownFloor?.id ? Color.black : Brand.textSecondary)
+                                        .background(floor.id == shownFloor?.id ? Color.white : Color.clear, in: Capsule())
+                                        .overlay(Capsule().strokeBorder(floor.id == shownFloor?.id ? Color.clear : Brand.hairline, lineWidth: 0.5))
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
                     }
                 } else {
-                    Text(shownFloor?.name ?? "")
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
+                    Eyebrow(shownFloor?.name ?? "", color: Brand.textPrimary, size: 9.5)
                 }
                 Spacer(minLength: 0)
                 Button {
@@ -309,7 +315,7 @@ struct TourMiniMap: View {
                 }
                 .buttonStyle(.plain)
             }
-            .foregroundStyle(.primary)
+            .foregroundStyle(Brand.textPrimary)
 
             if let floor = shownFloor, let planName = floor.planFileName {
                 AsyncPlanImage(url: store.fileURL(planName, in: project.id), maxPixelSize: 2048) { image in
@@ -327,8 +333,8 @@ struct TourMiniMap: View {
         }
         .padding(10)
         .frame(width: expanded ? 350 : 170)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .environment(\.colorScheme, .light)
+        .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 0.5))
         .onChange(of: currentFloorID) { _ in shownFloorID = nil }
     }
 }

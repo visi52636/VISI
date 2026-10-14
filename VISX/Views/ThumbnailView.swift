@@ -9,7 +9,7 @@ struct ThumbnailView: View {
     var body: some View {
         // The image is an overlay so it never changes the size the parent proposed.
         Rectangle()
-            .fill(Color(.secondarySystemBackground))
+            .fill(Brand.surfaceRaised)
             .overlay {
                 if let image {
                     Image(uiImage: image)

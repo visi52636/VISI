@@ -21,14 +21,16 @@ struct EmptyStateView<Actions: View>: View {
     var body: some View {
         VStack(spacing: 14) {
             Image(systemName: systemImage)
-                .font(.system(size: 40, weight: .light))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 34, weight: .ultraLight))
+                .foregroundStyle(Brand.textTertiary)
             Text(title)
-                .font(.title3.weight(.semibold))
+                .font(.display(24))
+                .foregroundStyle(Brand.textPrimary)
+                .multilineTextAlignment(.center)
             Text(message)
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.textSecondary)
                 .frame(maxWidth: 320)
             actions()
                 .padding(.top, 6)
@@ -51,11 +53,10 @@ struct ImportButtons: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Button { onSelect(.photos) } label: { Label("Photos", systemImage: "photo") }
-            Button { onSelect(.files) } label: { Label(filesLabel, systemImage: "folder") }
+            Button { onSelect(.photos) } label: { Text("Photos") }
+            Button { onSelect(.files) } label: { Text(filesLabel) }
         }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
+        .buttonStyle(.secondary)
     }
 }
 
@@ -81,12 +82,14 @@ struct Chip: View {
     let isSelected: Bool
 
     var body: some View {
-        Text(title)
-            .font(.subheadline.weight(isSelected ? .semibold : .regular))
+        Text(title.uppercased())
+            .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+            .tracking(1.6)
             .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .foregroundStyle(isSelected ? Color(.systemBackground) : Color.primary)
-            .background(isSelected ? Color.primary : Color(.secondarySystemFill), in: Capsule())
+            .padding(.vertical, 9)
+            .foregroundStyle(isSelected ? Color.black : Brand.textSecondary)
+            .background(isSelected ? Color.white : Color.clear, in: Capsule())
+            .overlay(Capsule().strokeBorder(isSelected ? Color.clear : Brand.hairline, lineWidth: 1))
     }
 }
 
@@ -99,20 +102,21 @@ struct UnderlineTabs<Item: Hashable>: View {
     @Namespace private var underline
 
     var body: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: 28) {
             ForEach(items, id: \.self) { item in
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) { selection = item }
                 } label: {
-                    VStack(spacing: 6) {
-                        Text(title(item))
-                            .font(.subheadline.weight(selection == item ? .semibold : .regular))
-                            .foregroundStyle(selection == item ? Color.primary : Color.secondary)
+                    VStack(spacing: 10) {
+                        Text(title(item).uppercased())
+                            .font(.system(size: 12, weight: selection == item ? .semibold : .medium))
+                            .tracking(2)
+                            .foregroundStyle(selection == item ? Brand.textPrimary : Brand.textTertiary)
                         ZStack {
                             Rectangle().fill(Color.clear).frame(height: 2)
                             if selection == item {
                                 Rectangle()
-                                    .fill(Color.primary)
+                                    .fill(Brand.accent)
                                     .frame(height: 2)
                                     .matchedGeometryEffect(id: "underline", in: underline)
                             }
@@ -136,18 +140,19 @@ struct ImageTile: View {
     var isSelected = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             ThumbnailView(url: url, contentMode: fit ? .fit : .fill)
                 .aspectRatio(aspectRatio, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Brand.cornerRadius, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(isSelected ? Color.primary : Color.clear, lineWidth: 2.5)
+                    RoundedRectangle(cornerRadius: Brand.cornerRadius, style: .continuous)
+                        .stroke(isSelected ? Brand.accent : Brand.hairline, lineWidth: isSelected ? 2 : 0.5)
                 )
-            Text(title)
-                .font(.footnote)
+            Text(title.uppercased())
+                .font(.system(size: 10.5, weight: .medium))
+                .tracking(1.4)
                 .lineLimit(1)
-                .foregroundStyle(.primary)
+                .foregroundStyle(isSelected ? Brand.textPrimary : Brand.textSecondary)
         }
         .contentShape(Rectangle())
     }
@@ -159,15 +164,16 @@ struct AddTile: View {
     var aspectRatio: CGFloat = 1.5
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            RoundedRectangle(cornerRadius: Brand.cornerRadius, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                .foregroundStyle(Brand.textTertiary)
                 .aspectRatio(aspectRatio, contentMode: .fit)
-                .overlay(Image(systemName: "plus").font(.title3).foregroundStyle(.secondary))
-            Text(title)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                .overlay(Image(systemName: "plus").font(.system(size: 20, weight: .ultraLight)).foregroundStyle(Brand.textSecondary))
+            Text(title.uppercased())
+                .font(.system(size: 10.5, weight: .medium))
+                .tracking(1.4)
+                .foregroundStyle(Brand.textTertiary)
         }
     }
 }

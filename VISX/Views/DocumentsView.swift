@@ -16,7 +16,7 @@ struct DocumentsView: View {
     @State private var nameDraft = ""
 
     private var documents: [ProjectDocument] { project.documents(of: kind) }
-    private var columns: [GridItem] { [GridItem(.adaptive(minimum: kind == .render ? 220 : 160), spacing: 16)] }
+    private var columns: [GridItem] { [GridItem(.adaptive(minimum: kind == .render ? 320 : 160), spacing: 16)] }
     private var aspectRatio: CGFloat { kind == .render ? 1.5 : 1.414 }
 
     var body: some View {

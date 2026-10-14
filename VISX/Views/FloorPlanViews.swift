@@ -8,6 +8,8 @@ struct PlanCanvas: View {
     var isEditing = false
     var showLabels = true
     var pinSize: CGFloat = 18
+    /// Shows the plan as light lines on black to suit the dark interface.
+    var darkPlan = true
     var onTap: ((LayoutPoint) -> Void)?
     var onPinTap: ((Panorama) -> Void)?
     var onPinMoved: ((Panorama, LayoutPoint) -> Void)?
@@ -16,6 +18,7 @@ struct PlanCanvas: View {
         Image(uiImage: image)
             .resizable()
             .aspectRatio(contentMode: .fit)
+            .modifier(DarkPlanModifier(enabled: darkPlan))
             .overlay {
                 GeometryReader { geo in
                     ZStack(alignment: .topLeading) {
@@ -60,33 +63,35 @@ private struct PlanPin: View {
 
     @GestureState private var dragOffset: CGSize = .zero
 
-    private static let pinColor = Color(white: 0.1)
-    private static let highlightColor = Color.orange
+    private static var pinColor: Color { Brand.accent }
+    private static let highlightColor = Color.white
 
     var body: some View {
         let diameter = isHighlighted ? size * 1.25 : size
         Circle()
             .fill(isHighlighted ? Self.highlightColor : Self.pinColor)
-            .overlay(Circle().stroke(.white, lineWidth: max(1.5, diameter * 0.14)))
-            .overlay(Circle().fill(.white).frame(width: diameter * 0.3, height: diameter * 0.3))
+            .overlay(Circle().stroke(isHighlighted ? Brand.accent : .black, lineWidth: max(1.5, diameter * 0.14)))
+            .overlay(Circle().fill(isHighlighted ? Brand.accent : .black).frame(width: diameter * 0.3, height: diameter * 0.3))
             .frame(width: diameter, height: diameter)
             .background {
                 if isHighlighted {
                     Circle()
-                        .fill(Self.highlightColor.opacity(0.25))
+                        .fill(Brand.accent.opacity(0.35))
                         .frame(width: diameter * 2.2, height: diameter * 2.2)
                 }
             }
-            .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+            .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
             .overlay(alignment: .top) {
                 if showLabel {
-                    Text(title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.black)
+                    Text(title.uppercased())
+                        .font(.system(size: 9, weight: .semibold))
+                        .tracking(1.1)
+                        .foregroundStyle(.white)
                         .lineLimit(1)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.white.opacity(0.92), in: Capsule())
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(.black.opacity(0.78), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 0.5))
                         .fixedSize()
                         .offset(y: diameter + 3)
                 }
@@ -153,10 +158,11 @@ struct ZoomablePlanView: View {
             .overlay(alignment: .bottomTrailing) {
                 VStack(spacing: 0) {
                     zoomButton("plus") { setZoom(zoom * 1.6) }
-                    Divider().frame(width: 36)
+                    Rectangle().fill(Brand.hairline).frame(width: 24, height: 0.5)
                     zoomButton("minus") { setZoom(zoom / 1.6) }
                 }
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(Brand.surfaceRaised.opacity(0.9), in: Capsule())
+                .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 0.5))
                 .padding(12)
             }
         }
@@ -165,8 +171,8 @@ struct ZoomablePlanView: View {
     private func zoomButton(_ systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.primary)
+                .font(.system(size: 15, weight: .light))
+                .foregroundStyle(Brand.textPrimary)
                 .frame(width: 40, height: 40)
         }
     }
@@ -207,6 +213,20 @@ struct AsyncPlanImage<Content: View>: View {
             image = await Task.detached(priority: .userInitiated) {
                 ImageProcessing.downsampledImage(at: url, maxPixelSize: size)
             }.value
+        }
+    }
+}
+
+/// Turns a plan drawn as dark lines on white paper into light lines on black.
+private struct DarkPlanModifier: ViewModifier {
+    let enabled: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content.grayscale(1).colorInvert().opacity(0.9)
+        } else {
+            content
         }
     }
 }

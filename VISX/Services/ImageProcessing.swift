@@ -19,7 +19,7 @@ enum ImageProcessing {
     }
 
     /// JPEG thumbnail for an image or PDF file.
-    static func thumbnailData(for url: URL, maxPixelSize: Int = 600) -> Data? {
+    static func thumbnailData(for url: URL, maxPixelSize: Int = 1200) -> Data? {
         if let data = try? Data(contentsOf: url), isPDF(data) {
             return renderFirstPDFPage(data, maxPixelSize: CGFloat(maxPixelSize))
                 .flatMap { UIImage(data: $0) }?

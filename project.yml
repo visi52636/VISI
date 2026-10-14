@@ -29,7 +29,8 @@ targets:
         CFBundleDisplayName: VIS X
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UIApplicationSupportsIndirectInputEvents: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
