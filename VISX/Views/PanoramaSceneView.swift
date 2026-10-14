@@ -101,6 +101,8 @@ struct PanoramaSceneView: UIViewRepresentable {
             material.diffuse.mipFilter = .linear
             sphere.firstMaterial = material
             sphereNode = SCNNode(geometry: sphere)
+            // 360° cameras put "forward" at the centre of the image; turn the sphere so that's the starting view.
+            sphereNode.eulerAngles.y = .pi
 
             super.init()
 

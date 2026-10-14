@@ -123,7 +123,7 @@ enum DemoContent {
             let font = UIFont.systemFont(ofSize: rect.width * 0.017, weight: .medium)
             let label = room.name.uppercased() as NSString
             let size = label.size(withAttributes: [.font: font])
-            label.draw(at: CGPoint(x: r.midX - size.width / 2, y: r.midY + rect.height * 0.04),
+            label.draw(at: CGPoint(x: r.midX - size.width / 2, y: r.minY + rect.height * 0.03),
                        withAttributes: [.font: font, .foregroundColor: UIColor(white: 0.45, alpha: 1), .kern: 1.5])
             // Door openings.
             UIColor.white.setFill()
