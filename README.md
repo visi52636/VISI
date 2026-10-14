@@ -1,64 +1,69 @@
-# VIS X – 360° Project Panoramas for iPhone
+# VIS X
 
-A native SwiftUI iPhone (and iPad) app to organise 360° panoramas into projects, see where each
-one was taken on a layout / floor plan, view them immersively, and share them with other devices.
+A minimalist iPhone & iPad app for presenting architecture projects — interiors and exteriors —
+to clients.
 
-## Features
+![Screenshots](screenshots/tour.png)
 
-- **Projects** – create, rename and delete projects; each holds any number of panoramas.
-- **Upload** – add equirectangular 360° images (2:1, e.g. Insta360, Ricoh Theta, GoPro Max)
-  from **Photos** or the **Files** app. Originals are kept untouched.
-- **Layout (floor plan / site plan)**
-  - add a layout per project from Photos or Files – images **or PDF drawings** (first page is used)
-  - **Place** mode: pick a panorama and tap where it was taken; drag markers to adjust,
-    long-press a thumbnail to remove it from the plan
-  - numbered markers match the numbers on the panorama thumbnails
-  - pinch or use +/− to zoom into large plans; tap a marker to open that 360° view
-- **360° viewer** (SceneKit)
-  - drag to look around, pinch to zoom, double-tap / ⌖ to recenter
-  - **motion mode**: move the phone to look around (gyroscope)
-  - **mini-map** of the layout showing your current position – tap another marker to jump
-    there; expand it for a bigger view, or hide it with the map button
-  - previous / next to walk through the project's panoramas
-- **Share with other devices**
-  - **Share Project** exports the whole project – panoramas, layout and positions – as one
-    `.visx` file. Send it with AirDrop, Messages, Mail, or save it to iCloud Drive / Files.
-    On another iPhone or iPad with VIS X installed, tapping the file imports the project
-    (or use the *Import* button on the Projects screen).
-  - **Share Image** sends an individual original panorama to any app or device.
+## What it does
 
-## Requirements
+Each project has three sections:
 
-- Xcode 15 or newer, iOS 16+ device or simulator
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+| Section | What the client sees |
+|---|---|
+| **360° Tour** | The plan of each floor (and the site / exterior) with pins. Tap a pin to step inside the 360° view, then tap the doorway markers to walk from room to room. A mini-map shows where you are and lets you jump to any room or floor. |
+| **Drawings** | Plans, sections, elevations (PDF or image). Tap to open full screen, pinch to zoom, swipe between sheets. |
+| **Renders** | Visualisations of the project, full screen and swipeable. |
 
-## Getting started
+The project opens in a clean, view-only mode — ideal to hand the phone to a client.
+Tap **Edit** to author:
+
+- **Floors** – add from presets (Basement, Ground Floor, First Floor, … Site / Exterior) or a custom name;
+  long-press a floor to rename, reorder, replace its plan or delete it.
+- **Plans** – one per floor, image or PDF (first page is used).
+- **360° views** – add equirectangular (2:1) images from Photos or Files, select one and tap
+  the plan to pin it; drag pins to adjust.
+- **Links between rooms** – inside a 360° view tap the link button, turn to face the doorway or
+  stairs, tap *Link Here* and choose the destination. Tap a link in Edit mode to remove it.
+- **Drawings & renders** – add, rename, delete.
+
+**Share** sends the entire project (floors, plans, 360° views, links, drawings, renders) as one
+`.visx` file via AirDrop, Messages, Mail or Files. Opening it on another device with VIS X
+imports it.
+
+## Build & run
+
+Requirements: a Mac with Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+(`brew install xcodegen`). iOS 16 or later.
 
 ```bash
-xcodegen generate     # creates VISX.xcodeproj from project.yml
+xcodegen generate
 open VISX.xcodeproj
 ```
 
-In Xcode select the **VISX** target → *Signing & Capabilities* → choose your Team, then run on
-your iPhone. (Motion mode needs a real device; the simulator supports drag/pinch only.)
+Select the **VISX** target → *Signing & Capabilities* → your Team, then run on your iPhone.
 
-## Project layout
+### Sample project
+
+Launch with the arguments `-VISXDemo YES` (Xcode → *Product › Scheme › Edit Scheme › Arguments*)
+to replace the app's content with a generated sample project ("Lakeside Villa"). The images in
+it are synthetic placeholders, not real photography. CI uses this mode to capture the screenshots
+in [`screenshots/`](screenshots).
+
+## Code layout
 
 ```
-project.yml                         XcodeGen spec (Info.plist, .visx file type)
-VISX/App/VISXApp.swift              App entry, handles opening received .visx files
-VISX/Models/Models.swift            Project, Panorama, LayoutPoint, ProjectArchive (share format)
-VISX/Services/ProjectStore.swift    Storage in Documents/, layout, import & export of projects
-VISX/Services/ImageProcessing.swift Thumbnails, GPU-safe downsampling, PDF plan rendering
-VISX/Views/LayoutViews.swift        Layout canvas, placement mode, viewer mini-map
-VISX/Views/                         Other SwiftUI screens and the SceneKit 360° renderer
+project.yml                          XcodeGen spec (Info.plist, .visx file type)
+VISX/App/VISXApp.swift               App entry; opens received .visx files
+VISX/Models/Models.swift             Project, Floor, Panorama, PanoramaLink, ProjectDocument
+VISX/Services/ProjectStore.swift     Storage, editing operations, .visx import/export
+VISX/Services/ImageProcessing.swift  Thumbnails, downsampling, PDF rendering
+VISX/Services/DemoContent.swift      Generated sample project for demos/screenshots
+VISX/Views/ProjectListView.swift     Home: project cards
+VISX/Views/ProjectView.swift         Project: Tour / Drawings / Renders, Edit, Share
+VISX/Views/TourView.swift            Floors, plan with pins, room strip
+VISX/Views/FloorPlanViews.swift      Zoomable plan canvas and pins
+VISX/Views/PanoramaViewerView.swift  360° viewer, hotspots, mini-map, link editor
+VISX/Views/PanoramaSceneView.swift   SceneKit sphere renderer (drag, pinch, gyroscope)
+VISX/Views/DocumentsView.swift       Drawings & renders grid with QuickLook
 ```
-
-Data lives in the app's Documents folder (`projects.json` + `Projects/<id>/` images) and is
-also visible in the Files app under *On My iPhone › VIS X*.
-
-## Possible next steps
-
-- Viewing-direction cone on the mini-map (needs a per-panorama "north" calibration)
-- iCloud / CloudKit sync so projects stay in sync automatically across devices
-- Hotspots inside a panorama linking to neighbouring panoramas (virtual tour)
