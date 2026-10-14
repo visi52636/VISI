@@ -1,49 +1,95 @@
 import Foundation
 
-/// A single 360° equirectangular panorama stored inside a project.
+/// A normalized point on a floor plan: (0,0) is top-left, (1,1) is bottom-right.
+struct LayoutPoint: Codable, Hashable {
+    var x: Double
+    var y: Double
+}
+
+/// A clickable "door" inside a panorama that jumps to another panorama.
+/// `yaw`/`pitch` (radians) give the direction where the hotspot is shown.
+struct PanoramaLink: Identifiable, Codable, Hashable {
+    var id: UUID = UUID()
+    var targetID: Panorama.ID
+    var yaw: Double
+    var pitch: Double
+}
+
+/// A 360° equirectangular panorama of a room or exterior view.
 struct Panorama: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var title: String
     var imageFileName: String
     var thumbnailFileName: String
     var createdAt: Date = Date()
-    /// Where the panorama was taken on the project layout, normalized to 0...1. `nil` = not placed.
+    var floorID: Floor.ID
+    /// Position on the floor plan; `nil` while not placed yet.
     var layoutPosition: LayoutPoint?
+    var links: [PanoramaLink] = []
 }
 
-/// A point on the layout image, normalized so (0,0) is top-left and (1,1) is bottom-right.
-struct LayoutPoint: Codable, Hashable {
-    var x: Double
-    var y: Double
+/// A level of the building (or the site / exterior) with an optional plan drawing.
+struct Floor: Identifiable, Codable, Hashable {
+    var id: UUID = UUID()
+    var name: String
+    var planFileName: String?
 }
 
-/// A named collection of panoramas (e.g. a building site, a property, a trip).
+/// A drawing or render the client can browse.
+struct ProjectDocument: Identifiable, Codable, Hashable {
+    enum Kind: String, Codable, CaseIterable, Identifiable {
+        case drawing, render
+        var id: String { rawValue }
+        var title: String { self == .drawing ? "Drawings" : "Renders" }
+        var singular: String { self == .drawing ? "Drawing" : "Render" }
+    }
+
+    var id: UUID = UUID()
+    var title: String
+    var kind: Kind
+    var fileName: String
+    var thumbnailFileName: String
+    var createdAt: Date = Date()
+}
+
+/// An architecture project: floors with plans, 360° panoramas, drawings and renders.
 struct Project: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var name: String
-    var notes: String = ""
+    var subtitle: String = ""
     var createdAt: Date = Date()
+    var floors: [Floor] = []
     var panoramas: [Panorama] = []
-    /// Floor plan / site layout image file, stored in the project folder.
-    var layoutImageFileName: String?
-}
+    var documents: [ProjectDocument] = []
 
-/// Portable representation of a project used for sharing between devices.
-/// Written as a binary property list with the `.visx` extension.
-struct ProjectArchive: Codable {
-    struct Item: Codable {
-        var title: String
-        var createdAt: Date
-        var imageData: Data
-        var layoutPosition: LayoutPoint?
+    func panoramas(on floorID: Floor.ID) -> [Panorama] {
+        panoramas.filter { $0.floorID == floorID }
     }
 
-    static let formatVersion = 1
+    func panorama(_ id: Panorama.ID) -> Panorama? {
+        panoramas.first { $0.id == id }
+    }
+
+    func floor(_ id: Floor.ID) -> Floor? {
+        floors.first { $0.id == id }
+    }
+
+    func documents(of kind: ProjectDocument.Kind) -> [ProjectDocument] {
+        documents.filter { $0.kind == kind }
+    }
+
+    /// Image used on the project card: first render, otherwise first panorama.
+    var coverFileName: String? {
+        documents(of: .render).first?.thumbnailFileName ?? panoramas.first?.thumbnailFileName
+    }
+}
+
+/// Portable single-file representation of a project (`.visx`), used to share with other devices.
+/// Contains the project description plus every file it references.
+struct ProjectArchive: Codable {
+    static let formatVersion = 2
 
     var version: Int = ProjectArchive.formatVersion
-    var name: String
-    var notes: String
-    var createdAt: Date
-    var items: [Item]
-    var layoutImageData: Data?
+    var project: Project
+    var files: [String: Data]
 }

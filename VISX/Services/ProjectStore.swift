@@ -2,27 +2,31 @@ import Foundation
 import SwiftUI
 
 enum ProjectStoreError: LocalizedError {
-    case notAnImage
+    case unsupportedFile
+    case notFound
     case invalidArchive
     case unsupportedArchiveVersion(Int)
 
     var errorDescription: String? {
         switch self {
-        case .notAnImage: return "The selected file is not a supported image."
+        case .unsupportedFile: return "This file type isn't supported. Use an image (JPG, PNG, HEIC) or a PDF."
+        case .notFound: return "This item no longer exists."
         case .invalidArchive: return "The file is not a valid VIS X project."
-        case .unsupportedArchiveVersion(let v): return "This project was created with a newer version of VIS X (format \(v))."
+        case .unsupportedArchiveVersion(let v): return "This project was made with a newer version of VIS X (format \(v)). Please update the app."
         }
     }
 }
 
-/// Persists projects and their panorama images in the app's Documents directory.
+/// Persists projects and their files in the app's Documents directory.
 ///
 /// Layout:
-///   Documents/projects.json             – project index
-///   Documents/Projects/<project-id>/    – image + thumbnail files for each panorama
+///   Documents/projects.json           – index of all projects
+///   Documents/Projects/<project-id>/  – panoramas, thumbnails, plans, drawings and renders
 @MainActor
 final class ProjectStore: ObservableObject {
     @Published private(set) var projects: [Project] = []
+
+    static let defaultFloorName = "Ground Floor"
 
     private let fileManager = FileManager.default
     private let rootURL: URL
@@ -32,6 +36,9 @@ final class ProjectStore: ObservableObject {
     init(rootURL: URL? = nil) {
         self.rootURL = rootURL ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         load()
+        if LaunchOptions.isDemo {
+            DemoContent.install(in: self)
+        }
     }
 
     // MARK: - Lookup
@@ -44,171 +51,217 @@ final class ProjectStore: ObservableObject {
         projectsDirectory.appendingPathComponent(projectID.uuidString, isDirectory: true)
     }
 
-    func imageURL(for panorama: Panorama, in projectID: Project.ID) -> URL {
-        directory(for: projectID).appendingPathComponent(panorama.imageFileName)
-    }
-
-    func thumbnailURL(for panorama: Panorama, in projectID: Project.ID) -> URL {
-        directory(for: projectID).appendingPathComponent(panorama.thumbnailFileName)
-    }
-
-    func layoutImageURL(for project: Project) -> URL? {
-        project.layoutImageFileName.map { directory(for: project.id).appendingPathComponent($0) }
+    func fileURL(_ fileName: String, in projectID: Project.ID) -> URL {
+        directory(for: projectID).appendingPathComponent(fileName)
     }
 
     // MARK: - Projects
 
     @discardableResult
-    func createProject(name: String, notes: String = "") -> Project {
+    func createProject(name: String, subtitle: String = "") -> Project {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let project = Project(name: trimmed.isEmpty ? "Untitled Project" : trimmed, notes: notes)
+        let project = Project(
+            name: trimmed.isEmpty ? "Untitled Project" : trimmed,
+            subtitle: subtitle,
+            floors: [Floor(name: Self.defaultFloorName)]
+        )
         try? fileManager.createDirectory(at: directory(for: project.id), withIntermediateDirectories: true)
         projects.insert(project, at: 0)
         save()
         return project
     }
 
-    func renameProject(_ projectID: Project.ID, to name: String) {
+    func updateProject(_ projectID: Project.ID, name: String, subtitle: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
-        projects[index].name = trimmed
-        save()
-    }
-
-    func updateNotes(_ projectID: Project.ID, notes: String) {
-        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
-        projects[index].notes = notes
-        save()
-    }
-
-    func deleteProjects(at offsets: IndexSet) {
-        for index in offsets {
-            try? fileManager.removeItem(at: directory(for: projects[index].id))
+        mutate(projectID) {
+            if !trimmed.isEmpty { $0.name = trimmed }
+            $0.subtitle = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        projects.remove(atOffsets: offsets)
+    }
+
+    func deleteProject(_ projectID: Project.ID) {
+        try? fileManager.removeItem(at: directory(for: projectID))
+        projects.removeAll { $0.id == projectID }
         save()
+    }
+
+    // MARK: - Floors
+
+    @discardableResult
+    func addFloor(named name: String, to projectID: Project.ID) -> Floor? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let floor = Floor(name: trimmed.isEmpty ? "New Floor" : trimmed)
+        var added = false
+        mutate(projectID) { $0.floors.append(floor); added = true }
+        return added ? floor : nil
+    }
+
+    func renameFloor(_ floorID: Floor.ID, in projectID: Project.ID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        mutate(projectID) { project in
+            guard let i = project.floors.firstIndex(where: { $0.id == floorID }) else { return }
+            project.floors[i].name = trimmed
+        }
+    }
+
+    func moveFloor(_ floorID: Floor.ID, in projectID: Project.ID, by offset: Int) {
+        mutate(projectID) { project in
+            guard let i = project.floors.firstIndex(where: { $0.id == floorID }) else { return }
+            let j = i + offset
+            guard project.floors.indices.contains(j) else { return }
+            project.floors.swapAt(i, j)
+        }
+    }
+
+    /// Deletes a floor together with its plan and panoramas.
+    func deleteFloor(_ floorID: Floor.ID, in projectID: Project.ID) {
+        guard let project = self.project(id: projectID), let floor = project.floor(floorID) else { return }
+        if let plan = floor.planFileName { removeFile(plan, in: projectID) }
+        let removed = Set(project.panoramas(on: floorID).map(\.id))
+        for panorama in project.panoramas(on: floorID) {
+            removeFile(panorama.imageFileName, in: projectID)
+            removeFile(panorama.thumbnailFileName, in: projectID)
+        }
+        mutate(projectID) { project in
+            project.floors.removeAll { $0.id == floorID }
+            project.panoramas.removeAll { removed.contains($0.id) }
+            for i in project.panoramas.indices {
+                project.panoramas[i].links.removeAll { removed.contains($0.targetID) }
+            }
+        }
+    }
+
+    /// Sets the plan drawing of a floor. Accepts an image or a PDF (first page is used).
+    func setPlan(data: Data, for floorID: Floor.ID, in projectID: Project.ID) throws {
+        let imageData: Data
+        if ImageProcessing.isPDF(data) {
+            guard let rendered = ImageProcessing.renderFirstPDFPage(data) else { throw ProjectStoreError.unsupportedFile }
+            imageData = rendered
+        } else if ImageProcessing.isImage(data) {
+            imageData = data
+        } else {
+            throw ProjectStoreError.unsupportedFile
+        }
+        guard let floor = project(id: projectID)?.floor(floorID) else { throw ProjectStoreError.notFound }
+        let name = try writeFile(imageData, prefix: "plan", in: projectID)
+        if let old = floor.planFileName { removeFile(old, in: projectID) }
+        mutate(projectID) { project in
+            guard let i = project.floors.firstIndex(where: { $0.id == floorID }) else { return }
+            project.floors[i].planFileName = name
+        }
     }
 
     // MARK: - Panoramas
 
     @discardableResult
-    func addPanorama(imageData: Data, title: String, createdAt: Date = Date(), to projectID: Project.ID) throws -> Panorama {
-        guard ImageProcessing.isImage(imageData) else { throw ProjectStoreError.notAnImage }
-        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { throw ProjectStoreError.invalidArchive }
+    func addPanorama(imageData: Data, title: String, floorID: Floor.ID, to projectID: Project.ID) throws -> Panorama {
+        guard ImageProcessing.isImage(imageData) else { throw ProjectStoreError.unsupportedFile }
+        guard let project = self.project(id: projectID), project.floor(floorID) != nil else { throw ProjectStoreError.notFound }
 
-        let folder = directory(for: projectID)
-        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
-
-        let id = UUID()
-        let imageName = "\(id.uuidString).\(ImageProcessing.fileExtension(for: imageData))"
-        let thumbName = "\(id.uuidString)_thumb.jpg"
-        let imageURL = folder.appendingPathComponent(imageName)
-        try imageData.write(to: imageURL, options: .atomic)
-        if let thumb = ImageProcessing.thumbnailData(for: imageURL) {
-            try thumb.write(to: folder.appendingPathComponent(thumbName), options: .atomic)
-        }
-
+        let imageName = try writeFile(imageData, prefix: "pano", in: projectID)
+        let thumbName = try writeThumbnail(for: imageName, in: projectID)
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let panorama = Panorama(
-            id: id,
-            title: trimmed.isEmpty ? "Panorama \(projects[index].panoramas.count + 1)" : trimmed,
+            title: trimmed.isEmpty ? "Room \(project.panoramas(on: floorID).count + 1)" : trimmed,
             imageFileName: imageName,
             thumbnailFileName: thumbName,
-            createdAt: createdAt
+            floorID: floorID
         )
-        projects[index].panoramas.append(panorama)
-        save()
+        mutate(projectID) { $0.panoramas.append(panorama) }
         return panorama
     }
 
     func renamePanorama(_ panoramaID: Panorama.ID, in projectID: Project.ID, to title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let p = projects.firstIndex(where: { $0.id == projectID }),
-              let i = projects[p].panoramas.firstIndex(where: { $0.id == panoramaID }) else { return }
-        projects[p].panoramas[i].title = trimmed
-        save()
+        guard !trimmed.isEmpty else { return }
+        mutatePanorama(panoramaID, in: projectID) { $0.title = trimmed }
     }
 
     func deletePanorama(_ panoramaID: Panorama.ID, from projectID: Project.ID) {
-        guard let p = projects.firstIndex(where: { $0.id == projectID }),
-              let i = projects[p].panoramas.firstIndex(where: { $0.id == panoramaID }) else { return }
-        let panorama = projects[p].panoramas[i]
-        try? fileManager.removeItem(at: imageURL(for: panorama, in: projectID))
-        try? fileManager.removeItem(at: thumbnailURL(for: panorama, in: projectID))
-        projects[p].panoramas.remove(at: i)
-        save()
+        guard let panorama = project(id: projectID)?.panorama(panoramaID) else { return }
+        removeFile(panorama.imageFileName, in: projectID)
+        removeFile(panorama.thumbnailFileName, in: projectID)
+        mutate(projectID) { project in
+            project.panoramas.removeAll { $0.id == panoramaID }
+            for i in project.panoramas.indices {
+                project.panoramas[i].links.removeAll { $0.targetID == panoramaID }
+            }
+        }
     }
 
-    // MARK: - Layout
-
-    /// Sets (or replaces) the floor plan / site layout of a project. Accepts image data or a PDF (first page is used).
-    func setLayout(data: Data, for projectID: Project.ID) throws {
-        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { throw ProjectStoreError.invalidArchive }
-        let imageData: Data
-        if ImageProcessing.isPDF(data) {
-            guard let rendered = ImageProcessing.renderFirstPDFPage(data) else { throw ProjectStoreError.notAnImage }
-            imageData = rendered
-        } else if ImageProcessing.isImage(data) {
-            imageData = data
-        } else {
-            throw ProjectStoreError.notAnImage
+    /// Places a panorama on its floor plan, or removes it from the plan when `position` is nil.
+    func setPosition(_ position: LayoutPoint?, for panoramaID: Panorama.ID, in projectID: Project.ID) {
+        mutatePanorama(panoramaID, in: projectID) {
+            $0.layoutPosition = position.map { LayoutPoint(x: min(max($0.x, 0), 1), y: min(max($0.y, 0), 1)) }
         }
-
-        let folder = directory(for: projectID)
-        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
-        if let old = projects[index].layoutImageFileName {
-            try? fileManager.removeItem(at: folder.appendingPathComponent(old))
-        }
-        let name = "layout-\(UUID().uuidString).\(ImageProcessing.fileExtension(for: imageData))"
-        try imageData.write(to: folder.appendingPathComponent(name), options: .atomic)
-        projects[index].layoutImageFileName = name
-        save()
     }
 
-    /// Removes the layout and clears all panorama positions.
-    func removeLayout(for projectID: Project.ID) {
-        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
-        if let old = projects[index].layoutImageFileName {
-            try? fileManager.removeItem(at: directory(for: projectID).appendingPathComponent(old))
+    // MARK: - Links between panoramas
+
+    func addLink(from sourceID: Panorama.ID, to targetID: Panorama.ID, yaw: Double, pitch: Double, in projectID: Project.ID) {
+        guard sourceID != targetID else { return }
+        mutatePanorama(sourceID, in: projectID) {
+            $0.links.append(PanoramaLink(targetID: targetID, yaw: yaw, pitch: pitch))
         }
-        projects[index].layoutImageFileName = nil
-        for i in projects[index].panoramas.indices {
-            projects[index].panoramas[i].layoutPosition = nil
-        }
-        save()
     }
 
-    /// Places a panorama on the layout, or removes it from the layout when `position` is nil.
-    func setLayoutPosition(_ position: LayoutPoint?, for panoramaID: Panorama.ID, in projectID: Project.ID) {
-        guard let p = projects.firstIndex(where: { $0.id == projectID }),
-              let i = projects[p].panoramas.firstIndex(where: { $0.id == panoramaID }) else { return }
-        projects[p].panoramas[i].layoutPosition = position.map {
-            LayoutPoint(x: min(max($0.x, 0), 1), y: min(max($0.y, 0), 1))
+    func removeLink(_ linkID: PanoramaLink.ID, from sourceID: Panorama.ID, in projectID: Project.ID) {
+        mutatePanorama(sourceID, in: projectID) { $0.links.removeAll { $0.id == linkID } }
+    }
+
+    // MARK: - Drawings & renders
+
+    @discardableResult
+    func addDocument(data: Data, title: String, kind: ProjectDocument.Kind, to projectID: Project.ID) throws -> ProjectDocument {
+        guard ImageProcessing.isPDF(data) || ImageProcessing.isImage(data) else { throw ProjectStoreError.unsupportedFile }
+        guard let project = self.project(id: projectID) else { throw ProjectStoreError.notFound }
+        let fileName = try writeFile(data, prefix: kind.rawValue, in: projectID)
+        let thumbName = try writeThumbnail(for: fileName, in: projectID)
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let document = ProjectDocument(
+            title: trimmed.isEmpty ? "\(kind.singular) \(project.documents(of: kind).count + 1)" : trimmed,
+            kind: kind,
+            fileName: fileName,
+            thumbnailFileName: thumbName
+        )
+        mutate(projectID) { $0.documents.append(document) }
+        return document
+    }
+
+    func renameDocument(_ documentID: ProjectDocument.ID, in projectID: Project.ID, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        mutate(projectID) { project in
+            guard let i = project.documents.firstIndex(where: { $0.id == documentID }) else { return }
+            project.documents[i].title = trimmed
         }
-        save()
+    }
+
+    func deleteDocument(_ documentID: ProjectDocument.ID, from projectID: Project.ID) {
+        guard let document = project(id: projectID)?.documents.first(where: { $0.id == documentID }) else { return }
+        removeFile(document.fileName, in: projectID)
+        removeFile(document.thumbnailFileName, in: projectID)
+        mutate(projectID) { $0.documents.removeAll { $0.id == documentID } }
     }
 
     // MARK: - Sharing
 
-    /// Writes the whole project into a single `.visx` file in the temporary directory
-    /// so it can be sent via AirDrop, Messages, Mail, Files, etc.
+    /// Writes the whole project into one `.visx` file in the temporary directory,
+    /// ready to send via AirDrop, Messages, Mail, Files, etc.
     func exportArchive(for projectID: Project.ID) throws -> URL {
-        guard let project = self.project(id: projectID) else { throw ProjectStoreError.invalidArchive }
-        let items = try project.panoramas.map { panorama in
-            ProjectArchive.Item(
-                title: panorama.title,
-                createdAt: panorama.createdAt,
-                imageData: try Data(contentsOf: imageURL(for: panorama, in: projectID)),
-                layoutPosition: panorama.layoutPosition
-            )
+        guard let project = self.project(id: projectID) else { throw ProjectStoreError.notFound }
+        var fileNames: [String] = project.panoramas.flatMap { [$0.imageFileName, $0.thumbnailFileName] }
+        fileNames += project.floors.compactMap(\.planFileName)
+        fileNames += project.documents.flatMap { [$0.fileName, $0.thumbnailFileName] }
+
+        var files: [String: Data] = [:]
+        for name in fileNames {
+            files[name] = try? Data(contentsOf: fileURL(name, in: projectID))
         }
-        let layoutData = layoutImageURL(for: project).flatMap { try? Data(contentsOf: $0) }
-        let archive = ProjectArchive(name: project.name, notes: project.notes, createdAt: project.createdAt,
-                                     items: items, layoutImageData: layoutData)
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
-        let data = try encoder.encode(archive)
+        let data = try encoder.encode(ProjectArchive(project: project, files: files))
 
         let exportDir = fileManager.temporaryDirectory.appendingPathComponent("Export", isDirectory: true)
         try? fileManager.removeItem(at: exportDir)
@@ -235,20 +288,53 @@ final class ProjectStore: ObservableObject {
             throw ProjectStoreError.unsupportedArchiveVersion(archive.version)
         }
 
-        let project = createProject(name: uniqueName(for: archive.name), notes: archive.notes)
-        if let layoutData = archive.layoutImageData {
-            try? setLayout(data: layoutData, for: project.id)
+        var project = archive.project
+        project.id = UUID() // Always import as a separate copy.
+        project.name = uniqueName(for: project.name)
+        let folder = directory(for: project.id)
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        for (name, fileData) in archive.files where !name.contains("/") {
+            try fileData.write(to: folder.appendingPathComponent(name), options: .atomic)
         }
-        for item in archive.items {
-            let panorama = try addPanorama(imageData: item.imageData, title: item.title, createdAt: item.createdAt, to: project.id)
-            if let position = item.layoutPosition {
-                setLayoutPosition(position, for: panorama.id, in: project.id)
-            }
-        }
-        return self.project(id: project.id) ?? project
+        projects.insert(project, at: 0)
+        save()
+        return project
     }
 
-    // MARK: - Persistence
+    // MARK: - Helpers
+
+    private func mutate(_ projectID: Project.ID, _ change: (inout Project) -> Void) {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        change(&projects[index])
+        save()
+    }
+
+    private func mutatePanorama(_ panoramaID: Panorama.ID, in projectID: Project.ID, _ change: (inout Panorama) -> Void) {
+        mutate(projectID) { project in
+            guard let i = project.panoramas.firstIndex(where: { $0.id == panoramaID }) else { return }
+            change(&project.panoramas[i])
+        }
+    }
+
+    private func writeFile(_ data: Data, prefix: String, in projectID: Project.ID) throws -> String {
+        let folder = directory(for: projectID)
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = "\(prefix)-\(UUID().uuidString).\(ImageProcessing.fileExtension(for: data))"
+        try data.write(to: folder.appendingPathComponent(name), options: .atomic)
+        return name
+    }
+
+    private func writeThumbnail(for fileName: String, in projectID: Project.ID) throws -> String {
+        let thumbName = "thumb-\(UUID().uuidString).jpg"
+        if let thumb = ImageProcessing.thumbnailData(for: fileURL(fileName, in: projectID)) {
+            try thumb.write(to: fileURL(thumbName, in: projectID), options: .atomic)
+        }
+        return thumbName
+    }
+
+    private func removeFile(_ name: String, in projectID: Project.ID) {
+        try? fileManager.removeItem(at: fileURL(name, in: projectID))
+    }
 
     private func load() {
         try? fileManager.createDirectory(at: projectsDirectory, withIntermediateDirectories: true)

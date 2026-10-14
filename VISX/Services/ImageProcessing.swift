@@ -18,13 +18,19 @@ enum ImageProcessing {
         return UIImage(cgImage: cgImage)
     }
 
-    /// Returns JPEG data for a thumbnail of the image at `url`.
+    /// JPEG thumbnail for an image or PDF file.
     static func thumbnailData(for url: URL, maxPixelSize: Int = 600) -> Data? {
-        downsampledImage(at: url, maxPixelSize: maxPixelSize)?.jpegData(compressionQuality: 0.8)
+        if let data = try? Data(contentsOf: url), isPDF(data) {
+            return renderFirstPDFPage(data, maxPixelSize: CGFloat(maxPixelSize))
+                .flatMap { UIImage(data: $0) }?
+                .jpegData(compressionQuality: 0.8)
+        }
+        return downsampledImage(at: url, maxPixelSize: maxPixelSize)?.jpegData(compressionQuality: 0.8)
     }
 
-    /// Best-effort file extension for raw image data (keeps HEIC/PNG originals intact).
+    /// File extension for raw data: "pdf" for PDFs, otherwise the detected image type (keeps HEIC/PNG intact).
     static func fileExtension(for data: Data) -> String {
+        if isPDF(data) { return "pdf" }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let typeIdentifier = CGImageSourceGetType(source) as String?,
               let type = UTType(typeIdentifier),
@@ -34,7 +40,7 @@ enum ImageProcessing {
         return ext
     }
 
-    /// Renders the first page of a PDF (e.g. an architectural floor plan) to PNG data.
+    /// Renders the first page of a PDF (e.g. an architectural plan) to PNG data.
     static func renderFirstPDFPage(_ data: Data, maxPixelSize: CGFloat = 4096) -> Data? {
         guard let provider = CGDataProvider(data: data as CFData),
               let document = CGPDFDocument(provider),
@@ -64,7 +70,7 @@ enum ImageProcessing {
     }
 
     static func isImage(_ data: Data) -> Bool {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
+        guard !isPDF(data), let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
         return CGImageSourceGetCount(source) > 0
     }
 }

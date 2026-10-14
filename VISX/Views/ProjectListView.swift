@@ -5,57 +5,79 @@ struct ProjectListView: View {
     @EnvironmentObject private var store: ProjectStore
     @State private var path: [Project.ID] = []
     @State private var showingNewProject = false
-    @State private var newProjectName = ""
+    @State private var newName = ""
+    @State private var newSubtitle = ""
     @State private var showingImporter = false
+    @State private var projectToDelete: Project?
+    @State private var sharePayload: SharePayload?
     @State private var errorMessage: String?
+
+    private let columns = [GridItem(.adaptive(minimum: 300), spacing: 20)]
 
     var body: some View {
         NavigationStack(path: $path) {
             Group {
                 if store.projects.isEmpty {
-                    emptyState
+                    EmptyStateView(
+                        systemImage: "building.2",
+                        title: "No projects yet",
+                        message: "Create a project to add floor plans, 360° views, drawings and renders. Projects shared with you open here too."
+                    ) {
+                        Button("New Project") { startNewProject() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                    }
                 } else {
-                    List {
-                        ForEach(store.projects) { project in
-                            NavigationLink(value: project.id) {
-                                ProjectRow(project: project)
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 28) {
+                            ForEach(store.projects) { project in
+                                NavigationLink(value: project.id) {
+                                    ProjectCard(project: project)
+                                }
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button { share(project) } label: { Label("Share", systemImage: "square.and.arrow.up") }
+                                    Button(role: .destructive) { projectToDelete = project } label: { Label("Delete", systemImage: "trash") }
+                                }
                             }
                         }
-                        .onDelete(perform: store.deleteProjects)
+                        .padding(20)
                     }
-                    .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("Projects")
             .navigationDestination(for: Project.ID.self) { id in
-                ProjectDetailView(projectID: id)
+                ProjectView(projectID: id)
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        showingImporter = true
-                    } label: {
-                        Label("Import Project", systemImage: "square.and.arrow.down")
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button { showingImporter = true } label: {
+                        Label("Open Shared Project", systemImage: "tray.and.arrow.down")
                     }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        newProjectName = ""
-                        showingNewProject = true
-                    } label: {
+                    Button { startNewProject() } label: {
                         Label("New Project", systemImage: "plus")
                     }
                 }
             }
             .alert("New Project", isPresented: $showingNewProject) {
-                TextField("Project name", text: $newProjectName)
+                TextField("Name", text: $newName)
+                TextField("Location or client (optional)", text: $newSubtitle)
                 Button("Cancel", role: .cancel) {}
                 Button("Create") {
-                    let project = store.createProject(name: newProjectName)
+                    let project = store.createProject(name: newName, subtitle: newSubtitle)
                     path.append(project.id)
                 }
+            }
+            .confirmationDialog(
+                "Delete \"\(projectToDelete?.name ?? "")\"?",
+                isPresented: Binding(get: { projectToDelete != nil }, set: { if !$0 { projectToDelete = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Project", role: .destructive) {
+                    if let project = projectToDelete { store.deleteProject(project.id) }
+                }
             } message: {
-                Text("Give your 360° project a name.")
+                Text("All floors, 360° views, drawings and renders in this project will be removed from this device.")
             }
             .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.visxProject]) { result in
                 do {
@@ -65,58 +87,67 @@ struct ProjectListView: View {
                     errorMessage = error.localizedDescription
                 }
             }
-            .alert("Error", isPresented: Binding(
-                get: { errorMessage != nil },
-                set: { if !$0 { errorMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(errorMessage ?? "")
+            .sheet(item: $sharePayload) { payload in
+                ShareSheet(items: payload.items)
+                    .presentationDetents([.medium, .large])
+            }
+            .errorAlert($errorMessage)
+            .onAppear {
+                // Demo / screenshot mode: jump straight into the first project.
+                if let screen = LaunchOptions.screen, screen != "projects", path.isEmpty, let first = store.projects.first {
+                    path = [first.id]
+                }
             }
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "pano.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(.tint)
-            Text("No Projects Yet")
-                .font(.title2.bold())
-            Text("Create a project, then add your 360° panoramas from Photos or Files. Projects you receive by AirDrop appear here too.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 32)
-            Button {
-                newProjectName = ""
-                showingNewProject = true
-            } label: {
-                Label("New Project", systemImage: "plus")
-            }
-            .buttonStyle(.borderedProminent)
+    private func startNewProject() {
+        newName = ""
+        newSubtitle = ""
+        showingNewProject = true
+    }
+
+    private func share(_ project: Project) {
+        do {
+            sharePayload = SharePayload(items: [try store.exportArchive(for: project.id)])
+        } catch {
+            errorMessage = error.localizedDescription
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 @MainActor
-private struct ProjectRow: View {
+private struct ProjectCard: View {
     @EnvironmentObject private var store: ProjectStore
     let project: Project
 
     var body: some View {
-        HStack(spacing: 12) {
-            ThumbnailView(url: project.panoramas.first.map { store.thumbnailURL(for: $0, in: project.id) })
-                .frame(width: 88, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 10) {
+            ThumbnailView(url: project.coverFileName.map { store.fileURL($0, in: project.id) })
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
                 Text(project.name)
                     .font(.headline)
-                Text("\(project.panoramas.count) panorama\(project.panoramas.count == 1 ? "" : "s") · \(project.createdAt.formatted(date: .abbreviated, time: .omitted))")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                if !project.subtitle.isEmpty {
+                    Text(project.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
         }
-        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+
+    private var summary: String {
+        func count(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
+        return [
+            count(project.floors.count, "floor"),
+            count(project.panoramas.count, "360° view"),
+            count(project.documents.count, "file")
+        ].joined(separator: " · ")
     }
 }
