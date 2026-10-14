@@ -11,6 +11,7 @@ struct ProjectListView: View {
     @State private var projectToDelete: Project?
     @State private var sharePayload: SharePayload?
     @State private var errorMessage: String?
+    @State private var isLoadingSample = false
 
     private let columns = [GridItem(.adaptive(minimum: 300), spacing: 20)]
 
@@ -23,9 +24,13 @@ struct ProjectListView: View {
                         title: "No projects yet",
                         message: "Create a project to add floor plans, 360° views, drawings and renders. Projects shared with you open here too."
                     ) {
-                        Button("New Project") { startNewProject() }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
+                        VStack(spacing: 12) {
+                            Button("New Project") { startNewProject() }
+                                .buttonStyle(.borderedProminent)
+                            Button("Try Sample Project") { loadSample() }
+                                .buttonStyle(.bordered)
+                        }
+                        .controlSize(.large)
                     }
                 } else {
                     ScrollView {
@@ -54,8 +59,13 @@ struct ProjectListView: View {
                     Button { showingImporter = true } label: {
                         Label("Open Shared Project", systemImage: "tray.and.arrow.down")
                     }
-                    Button { startNewProject() } label: {
+                    Menu {
+                        Button { startNewProject() } label: { Label("New Project", systemImage: "plus") }
+                        Button { loadSample() } label: { Label("Add Sample Project", systemImage: "sparkles") }
+                    } label: {
                         Label("New Project", systemImage: "plus")
+                    } primaryAction: {
+                        startNewProject()
                     }
                 }
             }
@@ -92,6 +102,16 @@ struct ProjectListView: View {
                     .presentationDetents([.medium, .large])
             }
             .errorAlert($errorMessage)
+            .overlay {
+                if isLoadingSample {
+                    VStack(spacing: 12) {
+                        ProgressView().controlSize(.large)
+                        Text("Preparing sample…").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .padding(28)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+            }
             .onAppear {
                 // Demo / screenshot mode: jump straight into the first project.
                 if let screen = LaunchOptions.screen, screen != "projects", path.isEmpty, let first = store.projects.first {
@@ -105,6 +125,18 @@ struct ProjectListView: View {
         newName = ""
         newSubtitle = ""
         showingNewProject = true
+    }
+
+    private func loadSample() {
+        isLoadingSample = true
+        Task {
+            // Give the progress indicator a moment to appear; generating the sample takes a few seconds.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            if let id = DemoContent.install(in: store) {
+                path = [id]
+            }
+            isLoadingSample = false
+        }
     }
 
     private func share(_ project: Project) {

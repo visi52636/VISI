@@ -57,6 +57,33 @@ jobs:
         with:
           name: screenshots
           path: screenshots
+      - name: Build downloadable packages
+        run: |
+          # Simulator build (arm64 + x86_64) for browser services such as Appetize.io.
+          xcodebuild build -project VISX.xcodeproj -scheme VISX -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-sim ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO | tail -n 5
+          # Unsigned device build; tools like Sideloadly sign it with the user's Apple ID.
+          xcodebuild build -project VISX.xcodeproj -scheme VISX -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build-device CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" | tail -n 5
+          mkdir -p packages
+          (cd build-sim/Build/Products/Release-iphonesimulator && zip -qry "$GITHUB_WORKSPACE/packages/VISX-simulator.zip" VISX.app)
+          mkdir -p Payload
+          cp -R build-device/Build/Products/Release-iphoneos/VISX.app Payload/
+          zip -qry packages/VISX.ipa Payload
+          ls -la packages
+      - name: Publish preview release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete preview --yes --cleanup-tag || true
+          gh release create preview packages/VISX-simulator.zip packages/VISX.ipa \
+            --prerelease --target "$GITHUB_SHA" --title "VIS X preview" \
+            --notes "Latest preview build from ${GITHUB_REF_NAME} (${GITHUB_SHA::7}).
+          - VISX-simulator.zip: upload to appetize.io to run the app in a web browser.
+          - VISX.ipa: install on an iPhone from Windows or Mac with Sideloadly (signs with your Apple ID)."
       - name: Commit screenshots to branch
         if: github.event_name == 'push'
         run: |

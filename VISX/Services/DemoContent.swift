@@ -36,15 +36,18 @@ enum DemoContent {
         Room(name: "Storage", rect: CGRect(x: 0.06, y: 0.06, width: 0.21, height: 0.26), pin: false)
     ]
 
-    static func install(in store: ProjectStore) {
-        for project in store.projects { store.deleteProject(project.id) }
-
-        // Second, smaller project so the home screen shows more than one card.
-        let office = store.createProject(name: "Harbour Office Fit-out", subtitle: "Level 4 · Client: Meridian")
-        try? store.addDocument(data: render(seed: 3), title: "Reception", kind: .render, to: office.id)
+    /// Adds the sample project. With `replacingExisting` (screenshot mode) all other projects are removed first
+    /// and a second small project is added so the home screen shows more than one card.
+    @discardableResult
+    static func install(in store: ProjectStore, replacingExisting: Bool = false) -> Project.ID? {
+        if replacingExisting {
+            for project in store.projects { store.deleteProject(project.id) }
+            let office = store.createProject(name: "Harbour Office Fit-out", subtitle: "Level 4 · Client: Meridian")
+            try? store.addDocument(data: render(seed: 3), title: "Reception", kind: .render, to: office.id)
+        }
 
         let villa = store.createProject(name: "Lakeside Villa", subtitle: "Private residence · Como")
-        guard let ground = store.project(id: villa.id)?.floors.first else { return }
+        guard let ground = store.project(id: villa.id)?.floors.first else { return nil }
         let first = store.addFloor(named: "First Floor", to: villa.id)
         let site = store.addFloor(named: "Site / Exterior", to: villa.id)
 
@@ -108,6 +111,7 @@ enum DemoContent {
                                title: "A-102 First Floor Plan", kind: .drawing, to: villa.id)
         try? store.addDocument(data: planPNG(rooms: groundRooms, title: "FURNITURE LAYOUT"),
                                title: "A-110 Furniture Layout", kind: .drawing, to: villa.id)
+        return villa.id
     }
 
     // MARK: - Plans

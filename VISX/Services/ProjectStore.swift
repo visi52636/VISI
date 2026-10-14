@@ -37,7 +37,7 @@ final class ProjectStore: ObservableObject {
         self.rootURL = rootURL ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         load()
         if LaunchOptions.isDemo {
-            DemoContent.install(in: self)
+            DemoContent.install(in: self, replacingExisting: true)
         }
     }
 
