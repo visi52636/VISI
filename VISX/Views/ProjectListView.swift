@@ -57,7 +57,7 @@ struct ProjectListView: View {
             } message: {
                 Text("Give your 360° project a name.")
             }
-            .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.visiProject]) { result in
+            .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.visxProject]) { result in
                 do {
                     let project = try store.importArchive(from: result.get())
                     path.append(project.id)

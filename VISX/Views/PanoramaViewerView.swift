@@ -14,6 +14,8 @@ struct PanoramaViewerView: View {
     @State private var resetToken = 0
     @State private var controlsVisible = true
     @State private var sharePayload: SharePayload?
+    @State private var layoutImage: UIImage?
+    @State private var showMap = true
 
     /// Maximum texture width; 8192 px keeps detail while staying within GPU and memory limits.
     private static let maxTextureSize = 8192
@@ -26,6 +28,8 @@ struct PanoramaViewerView: View {
     private var panoramas: [Panorama] { store.project(id: projectID)?.panoramas ?? [] }
     private var currentIndex: Int? { panoramas.firstIndex { $0.id == currentID } }
     private var current: Panorama? { currentIndex.map { panoramas[$0] } }
+    private var layoutURL: URL? { store.project(id: projectID).flatMap { store.layoutImageURL(for: $0) } }
+    private var hasPlacedPanoramas: Bool { panoramas.contains { $0.layoutPosition != nil } }
 
     var body: some View {
         ZStack {
@@ -49,6 +53,12 @@ struct PanoramaViewerView: View {
         }
         .statusBarHidden(!controlsVisible)
         .task(id: currentID) { await loadImage() }
+        .task(id: layoutURL) {
+            guard let url = layoutURL else { layoutImage = nil; return }
+            layoutImage = await Task.detached(priority: .utility) {
+                ImageProcessing.downsampledImage(at: url, maxPixelSize: 2048)
+            }.value
+        }
         .sheet(item: $sharePayload) { payload in
             ShareSheet(items: payload.items)
                 .presentationDetents([.medium, .large])
@@ -84,6 +94,17 @@ struct PanoramaViewerView: View {
 
             Spacer()
 
+            if showMap, let layoutImage, hasPlacedPanoramas {
+                HStack {
+                    LayoutMiniMap(image: layoutImage, panoramas: panoramas, currentID: currentID) { id in
+                        currentID = id
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+            }
+
             HStack(spacing: 20) {
                 CircleButton(systemImage: "chevron.left") { step(-1) }
                     .disabled((currentIndex ?? 0) == 0)
@@ -93,6 +114,11 @@ struct PanoramaViewerView: View {
                     motionEnabled.toggle()
                 }
                 CircleButton(systemImage: "scope") { resetToken += 1 }
+                if layoutImage != nil, hasPlacedPanoramas {
+                    CircleButton(systemImage: "map", highlighted: showMap) {
+                        withAnimation { showMap.toggle() }
+                    }
+                }
                 CircleButton(systemImage: "chevron.right") { step(1) }
                     .disabled((currentIndex ?? 0) >= panoramas.count - 1)
                     .opacity((currentIndex ?? 0) >= panoramas.count - 1 ? 0.4 : 1)

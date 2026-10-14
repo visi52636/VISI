@@ -9,8 +9,8 @@ enum ProjectStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notAnImage: return "The selected file is not a supported image."
-        case .invalidArchive: return "The file is not a valid VISI project."
-        case .unsupportedArchiveVersion(let v): return "This project was created with a newer version of VISI (format \(v))."
+        case .invalidArchive: return "The file is not a valid VIS X project."
+        case .unsupportedArchiveVersion(let v): return "This project was created with a newer version of VIS X (format \(v))."
         }
     }
 }
@@ -50,6 +50,10 @@ final class ProjectStore: ObservableObject {
 
     func thumbnailURL(for panorama: Panorama, in projectID: Project.ID) -> URL {
         directory(for: projectID).appendingPathComponent(panorama.thumbnailFileName)
+    }
+
+    func layoutImageURL(for project: Project) -> URL? {
+        project.layoutImageFileName.map { directory(for: project.id).appendingPathComponent($0) }
     }
 
     // MARK: - Projects
@@ -136,9 +140,58 @@ final class ProjectStore: ObservableObject {
         save()
     }
 
+    // MARK: - Layout
+
+    /// Sets (or replaces) the floor plan / site layout of a project. Accepts image data or a PDF (first page is used).
+    func setLayout(data: Data, for projectID: Project.ID) throws {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { throw ProjectStoreError.invalidArchive }
+        let imageData: Data
+        if ImageProcessing.isPDF(data) {
+            guard let rendered = ImageProcessing.renderFirstPDFPage(data) else { throw ProjectStoreError.notAnImage }
+            imageData = rendered
+        } else if ImageProcessing.isImage(data) {
+            imageData = data
+        } else {
+            throw ProjectStoreError.notAnImage
+        }
+
+        let folder = directory(for: projectID)
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        if let old = projects[index].layoutImageFileName {
+            try? fileManager.removeItem(at: folder.appendingPathComponent(old))
+        }
+        let name = "layout-\(UUID().uuidString).\(ImageProcessing.fileExtension(for: imageData))"
+        try imageData.write(to: folder.appendingPathComponent(name), options: .atomic)
+        projects[index].layoutImageFileName = name
+        save()
+    }
+
+    /// Removes the layout and clears all panorama positions.
+    func removeLayout(for projectID: Project.ID) {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        if let old = projects[index].layoutImageFileName {
+            try? fileManager.removeItem(at: directory(for: projectID).appendingPathComponent(old))
+        }
+        projects[index].layoutImageFileName = nil
+        for i in projects[index].panoramas.indices {
+            projects[index].panoramas[i].layoutPosition = nil
+        }
+        save()
+    }
+
+    /// Places a panorama on the layout, or removes it from the layout when `position` is nil.
+    func setLayoutPosition(_ position: LayoutPoint?, for panoramaID: Panorama.ID, in projectID: Project.ID) {
+        guard let p = projects.firstIndex(where: { $0.id == projectID }),
+              let i = projects[p].panoramas.firstIndex(where: { $0.id == panoramaID }) else { return }
+        projects[p].panoramas[i].layoutPosition = position.map {
+            LayoutPoint(x: min(max($0.x, 0), 1), y: min(max($0.y, 0), 1))
+        }
+        save()
+    }
+
     // MARK: - Sharing
 
-    /// Writes the whole project into a single `.visiproj` file in the temporary directory
+    /// Writes the whole project into a single `.visx` file in the temporary directory
     /// so it can be sent via AirDrop, Messages, Mail, Files, etc.
     func exportArchive(for projectID: Project.ID) throws -> URL {
         guard let project = self.project(id: projectID) else { throw ProjectStoreError.invalidArchive }
@@ -146,10 +199,13 @@ final class ProjectStore: ObservableObject {
             ProjectArchive.Item(
                 title: panorama.title,
                 createdAt: panorama.createdAt,
-                imageData: try Data(contentsOf: imageURL(for: panorama, in: projectID))
+                imageData: try Data(contentsOf: imageURL(for: panorama, in: projectID)),
+                layoutPosition: panorama.layoutPosition
             )
         }
-        let archive = ProjectArchive(name: project.name, notes: project.notes, createdAt: project.createdAt, items: items)
+        let layoutData = layoutImageURL(for: project).flatMap { try? Data(contentsOf: $0) }
+        let archive = ProjectArchive(name: project.name, notes: project.notes, createdAt: project.createdAt,
+                                     items: items, layoutImageData: layoutData)
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         let data = try encoder.encode(archive)
@@ -157,12 +213,12 @@ final class ProjectStore: ObservableObject {
         let exportDir = fileManager.temporaryDirectory.appendingPathComponent("Export", isDirectory: true)
         try? fileManager.removeItem(at: exportDir)
         try fileManager.createDirectory(at: exportDir, withIntermediateDirectories: true)
-        let url = exportDir.appendingPathComponent("\(sanitizedFileName(project.name)).visiproj")
+        let url = exportDir.appendingPathComponent("\(sanitizedFileName(project.name)).visx")
         try data.write(to: url, options: .atomic)
         return url
     }
 
-    /// Imports a `.visiproj` file received from another device as a new project.
+    /// Imports a `.visx` file received from another device as a new project.
     @discardableResult
     func importArchive(from url: URL) throws -> Project {
         let accessing = url.startAccessingSecurityScopedResource()
@@ -180,8 +236,14 @@ final class ProjectStore: ObservableObject {
         }
 
         let project = createProject(name: uniqueName(for: archive.name), notes: archive.notes)
+        if let layoutData = archive.layoutImageData {
+            try? setLayout(data: layoutData, for: project.id)
+        }
         for item in archive.items {
-            try addPanorama(imageData: item.imageData, title: item.title, createdAt: item.createdAt, to: project.id)
+            let panorama = try addPanorama(imageData: item.imageData, title: item.title, createdAt: item.createdAt, to: project.id)
+            if let position = item.layoutPosition {
+                setLayoutPosition(position, for: panorama.id, in: project.id)
+            }
         }
         return self.project(id: project.id) ?? project
     }

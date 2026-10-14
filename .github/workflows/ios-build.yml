@@ -17,8 +17,8 @@ jobs:
       - name: Build for iOS Simulator
         run: |
           xcodebuild build \
-            -project VISI.xcodeproj \
-            -scheme VISI \
+            -project VISX.xcodeproj \
+            -scheme VISX \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO

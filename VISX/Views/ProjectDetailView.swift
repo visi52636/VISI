@@ -16,6 +16,11 @@ struct ProjectDetailView: View {
     @State private var renamingPanorama: Panorama?
     @State private var nameDraft = ""
     @State private var errorMessage: String?
+    @State private var tab: DetailTab = .panoramas
+    @State private var importTarget: ImportTarget = .panoramas
+
+    enum DetailTab: Hashable { case panoramas, layout }
+    enum ImportTarget { case panoramas, layout }
 
     private let columns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
 
@@ -31,12 +36,15 @@ struct ProjectDetailView: View {
         }
         .navigationBarTitleDisplayMode(.large)
         .toolbar { toolbarContent }
-        .photosPicker(isPresented: $showingPhotoPicker, selection: $photoSelection, matching: .images)
+        .photosPicker(isPresented: $showingPhotoPicker, selection: $photoSelection,
+                      maxSelectionCount: importTarget == .layout ? 1 : nil, matching: .images)
         .onChange(of: photoSelection) { items in
             guard !items.isEmpty else { return }
             importPhotos(items)
         }
-        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+        .fileImporter(isPresented: $showingFileImporter,
+                      allowedContentTypes: importTarget == .layout ? [.image, .pdf] : [.image],
+                      allowsMultipleSelection: importTarget == .panoramas) { result in
             switch result {
             case .success(let urls): importFiles(urls)
             case .failure(let error): errorMessage = error.localizedDescription
@@ -87,8 +95,32 @@ struct ProjectDetailView: View {
         }
     }
 
-    @ViewBuilder
     private func content(for project: Project) -> some View {
+        VStack(spacing: 0) {
+            Picker("View", selection: $tab) {
+                Label("Panoramas", systemImage: "square.grid.2x2").tag(DetailTab.panoramas)
+                Label("Layout", systemImage: "map").tag(DetailTab.layout)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.bottom, 4)
+
+            switch tab {
+            case .panoramas:
+                panoramaGrid(for: project)
+            case .layout:
+                ProjectLayoutView(
+                    project: project,
+                    onAddLayoutFromPhotos: { addFromPhotos(.layout) },
+                    onAddLayoutFromFiles: { addFromFiles(.layout) },
+                    onOpenPanorama: { viewerSelection = $0 }
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func panoramaGrid(for project: Project) -> some View {
         if project.panoramas.isEmpty {
             VStack(spacing: 16) {
                 Image(systemName: "photo.badge.plus")
@@ -101,8 +133,8 @@ struct ProjectDetailView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 32)
                 HStack {
-                    Button { showingPhotoPicker = true } label: { Label("Photos", systemImage: "photo.on.rectangle") }
-                    Button { showingFileImporter = true } label: { Label("Files", systemImage: "folder") }
+                    Button { addFromPhotos(.panoramas) } label: { Label("Photos", systemImage: "photo.on.rectangle") }
+                    Button { addFromFiles(.panoramas) } label: { Label("Files", systemImage: "folder") }
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -116,11 +148,14 @@ struct ProjectDetailView: View {
                         .padding(.horizontal)
                 }
                 LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(project.panoramas) { panorama in
+                    ForEach(Array(project.panoramas.enumerated()), id: \.element.id) { index, panorama in
                         Button {
                             viewerSelection = panorama.id
                         } label: {
-                            PanoramaTile(url: store.thumbnailURL(for: panorama, in: projectID), title: panorama.title)
+                            PanoramaTile(url: store.thumbnailURL(for: panorama, in: projectID),
+                                         title: panorama.title,
+                                         number: index + 1,
+                                         isPlaced: panorama.layoutPosition != nil)
                         }
                         .buttonStyle(.plain)
                         .contextMenu { contextMenu(for: panorama) }
@@ -159,8 +194,9 @@ struct ProjectDetailView: View {
             .disabled(store.project(id: projectID)?.panoramas.isEmpty ?? true)
 
             Menu {
-                Button { showingPhotoPicker = true } label: { Label("Add from Photos", systemImage: "photo.on.rectangle") }
-                Button { showingFileImporter = true } label: { Label("Add from Files", systemImage: "folder") }
+                Button { addFromPhotos(.panoramas) } label: { Label("Add from Photos", systemImage: "photo.on.rectangle") }
+                Button { addFromFiles(.panoramas) } label: { Label("Add from Files", systemImage: "folder") }
+                Button { addFromFiles(.layout) } label: { Label("Set Layout (Image or PDF)", systemImage: "map") }
                 Divider()
                 Button {
                     nameDraft = store.project(id: projectID)?.name ?? ""
@@ -174,6 +210,26 @@ struct ProjectDetailView: View {
 
     // MARK: - Actions
 
+    private func addFromPhotos(_ target: ImportTarget) {
+        importTarget = target
+        showingPhotoPicker = true
+    }
+
+    private func addFromFiles(_ target: ImportTarget) {
+        importTarget = target
+        showingFileImporter = true
+    }
+
+    private func saveImported(_ data: Data, title: String) throws {
+        switch importTarget {
+        case .panoramas:
+            try store.addPanorama(imageData: data, title: title, to: projectID)
+        case .layout:
+            try store.setLayout(data: data, for: projectID)
+            tab = .layout
+        }
+    }
+
     private func importPhotos(_ items: [PhotosPickerItem]) {
         isImporting = true
         Task {
@@ -181,7 +237,7 @@ struct ProjectDetailView: View {
             for item in items {
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self) else { failures += 1; continue }
-                    try store.addPanorama(imageData: data, title: "", to: projectID)
+                    try saveImported(data, title: "")
                 } catch {
                     failures += 1
                 }
@@ -203,7 +259,7 @@ struct ProjectDetailView: View {
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
                 do {
                     let data = try Data(contentsOf: url)
-                    try store.addPanorama(imageData: data, title: url.deletingPathExtension().lastPathComponent, to: projectID)
+                    try saveImported(data, title: url.deletingPathExtension().lastPathComponent)
                 } catch {
                     failures += 1
                 }
@@ -236,6 +292,8 @@ private struct ViewerTarget: Identifiable {
 private struct PanoramaTile: View {
     let url: URL
     let title: String
+    let number: Int
+    let isPlaced: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -248,6 +306,18 @@ private struct PanoramaTile: View {
                         .padding(6)
                         .background(.ultraThinMaterial, in: Circle())
                         .padding(6)
+                }
+                .overlay(alignment: .topLeading) {
+                    HStack(spacing: 3) {
+                        Text("\(number)")
+                        if isPlaced { Image(systemName: "mappin") }
+                    }
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(isPlaced ? Color.red : Color.black.opacity(0.5), in: Capsule())
+                    .padding(6)
                 }
             Text(title)
                 .font(.subheadline.weight(.medium))

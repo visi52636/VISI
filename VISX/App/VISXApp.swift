@@ -2,13 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 extension UTType {
-    /// A shareable VISI project file (`.visiproj`). Declared in Info.plist.
-    static let visiProject = UTType(exportedAs: "com.visi.project")
+    /// A shareable VIS X project file (`.visx`). Declared in Info.plist.
+    static let visxProject = UTType(exportedAs: "com.visx.project")
 }
 
 @main
 @MainActor
-struct VISIApp: App {
+struct VISXApp: App {
     @StateObject private var store = ProjectStore()
     @State private var importError: String?
     @State private var importedProjectName: String?
@@ -18,7 +18,7 @@ struct VISIApp: App {
             ProjectListView()
                 .environmentObject(store)
                 .onOpenURL { url in
-                    // Called when a .visiproj file is opened from AirDrop, Messages, Mail or Files.
+                    // Called when a .visx file is opened from AirDrop, Messages, Mail or Files.
                     do {
                         let project = try store.importArchive(from: url)
                         importedProjectName = project.name

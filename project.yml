@@ -1,6 +1,6 @@
-name: VISI
+name: VISX
 options:
-  bundleIdPrefix: com.visi
+  bundleIdPrefix: com.visx
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
@@ -10,23 +10,23 @@ settings:
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
-  VISI:
+  VISX:
     type: application
     platform: iOS
     sources:
-      - path: VISI
+      - path: VISX
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.visi.panoramas
+        PRODUCT_BUNDLE_IDENTIFIER: com.visx.panoramas
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: VISI/Resources/Info.plist
+        INFOPLIST_FILE: VISX/Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
     info:
-      path: VISI/Resources/Info.plist
+      path: VISX/Resources/Info.plist
       properties:
-        CFBundleDisplayName: VISI
+        CFBundleDisplayName: VIS X
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
@@ -43,19 +43,19 @@ targets:
         LSSupportsOpeningDocumentsInPlace: false
         UIFileSharingEnabled: true
         UTExportedTypeDeclarations:
-          - UTTypeIdentifier: com.visi.project
-            UTTypeDescription: VISI 360 Project
+          - UTTypeIdentifier: com.visx.project
+            UTTypeDescription: VIS X 360 Project
             UTTypeConformsTo:
               - public.data
               - public.content
             UTTypeTagSpecification:
               public.filename-extension:
-                - visiproj
+                - visx
               public.mime-type:
-                - application/x-visiproj
+                - application/x-visx
         CFBundleDocumentTypes:
-          - CFBundleTypeName: VISI 360 Project
+          - CFBundleTypeName: VIS X 360 Project
             CFBundleTypeRole: Editor
             LSHandlerRank: Owner
             LSItemContentTypes:
-              - com.visi.project
+              - com.visx.project

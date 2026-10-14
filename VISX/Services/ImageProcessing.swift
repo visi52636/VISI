@@ -34,6 +34,35 @@ enum ImageProcessing {
         return ext
     }
 
+    /// Renders the first page of a PDF (e.g. an architectural floor plan) to PNG data.
+    static func renderFirstPDFPage(_ data: Data, maxPixelSize: CGFloat = 4096) -> Data? {
+        guard let provider = CGDataProvider(data: data as CFData),
+              let document = CGPDFDocument(provider),
+              let page = document.page(at: 1) else { return nil }
+        let box = page.getBoxRect(.cropBox)
+        guard box.width > 0, box.height > 0 else { return nil }
+        let scale = maxPixelSize / max(box.width, box.height)
+        let size = CGSize(width: box.width * scale, height: box.height * scale)
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let image = renderer.image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            let cg = context.cgContext
+            cg.translateBy(x: 0, y: size.height)
+            cg.scaleBy(x: scale, y: -scale)
+            cg.translateBy(x: -box.minX, y: -box.minY)
+            cg.drawPDFPage(page)
+        }
+        return image.pngData()
+    }
+
+    static func isPDF(_ data: Data) -> Bool {
+        data.prefix(5) == Data("%PDF-".utf8)
+    }
+
     static func isImage(_ data: Data) -> Bool {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
         return CGImageSourceGetCount(source) > 0
