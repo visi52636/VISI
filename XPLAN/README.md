@@ -1,59 +1,66 @@
 # XPLAN — Client & Payment Manager
 
-A small **local desktop program for Windows** (also works on macOS/Linux) that
-replaces the `PGS_KLNT` Excel workbook for tracking studio clients and their
-payments. It already contains **all 28 clients** imported from your spreadsheet.
-
+A local, **password-protected** desktop program for tracking architecture /
+design studio clients, their project payments and contractor commissions.
+Rebuilt from the `PGS_KLNT` Excel workbook and pre-loaded with all 28 clients.
 
 ## What it does
 
-- **Summary of every client** — contract value, amount paid and remaining
-  balance, with grand totals at the bottom (like the old `TOTALI` sheet).
-- **Add new clients** — name + contract value (and an optional first payment).
-- **Add / edit / delete payments** — each payment has an amount, date, a
-  **payment method** and a note. Paid and remaining update automatically.
-- **Manage payment methods** — add your own (Cash, Bank Transfer, Card, …).
-- **Extra items** — one-off extras per client (like `ATMOSFERE`, `PORCELANOSA`
-  in the original sheet).
-- **Export back to Excel** (`TOTALI` + one sheet per client) and auto-backups.
+- 🔒 **Password lock on open.** First launch asks you to set a password; it's
+  required on every start afterwards. (PBKDF2-hashed, stored locally. Change it
+  any time from the sidebar → *Change Password*.)
+- **Clients grouped by year** — each year shows its own totals; open a client
+  to see its full **project ledger**.
+- **Two payment categories, like the original sheet:**
+  - **Payments from the client** — money against the contract.
+  - **Commissions from contractors** — ATMOSFERE, PORCELANOSA, OZ, …
+  - *Remaining = Contract − client payments. Total received = client payments
+    + contractor commissions.*
+- **Add clients**, add/edit/delete **payments** and **commissions**, manage
+  **payment methods**.
+- 📈 **Payments & Charts** — bar charts of totals **by year** and **by month**,
+  with a *Show* filter to see client payments, contractor commissions, or both.
+- **Export to Excel** (`TOTALI`, `PAGESAT` by year+month+type, one sheet per
+  client) and automatic timestamped **backups**.
 
-Terms kept close to your sheet: *Vlera e Kontratës = Contract value •
-Pagesa = Payment • Data e Pagesës = Payment date • Të Dhëna = Paid •
-Të Mbetura = Remaining.*
+Albanian terms: *Vlera e Kontratës = Contract · Pagesa = Payment ·
+Të Dhëna = Paid · Të Mbetura = Remaining · Kontraktuesi = Contractor.*
 
-## How to run it (easiest)
+## Getting a single `XPLAN.exe`
 
-1. Install **Python 3** (free) from <https://www.python.org/downloads/>.
-   On the first install screen, tick **“Add python.exe to PATH”**. Leave
-   **tcl/tk** enabled (it is on by default — that is the window toolkit).
-2. Double-click **`run_XPLAN.bat`**. The program window opens.
+A Windows `.exe` must be built on Windows. Two easy ways:
 
-That's it — no other downloads are needed for day-to-day use. (The Excel
-*export* feature additionally uses `openpyxl`; the program will offer a CSV
-export and show the one-line install command if it isn't present.)
+### A. Build it yourself (gives a single exe with your data inside)
+1. Install **Python 3** from <https://www.python.org/downloads/> (tick
+   *“Add python.exe to PATH”*; leave tcl/tk enabled).
+2. Double-click **`BUILD_EXE.bat`**.
+3. You get **`dist\XPLAN.exe`** — one standalone file. Copy it anywhere and
+   double-click to run. Your clients are embedded; the live data is then kept
+   in `%APPDATA%\XPLAN`.
 
-## How to make a single double-click `XPLAN.exe` (optional)
+### B. Download the exe built automatically on GitHub
+The repository builds `XPLAN.exe` on every change (GitHub → **Actions** →
+*Build XPLAN Windows exe* → latest run → **Artifacts** → `XPLAN-windows-exe`).
+That exe starts empty; load your data once via **Settings → Restore data from
+file…** and pick the `xplan_data.json` you were given.
 
-If you'd rather not keep Python around, build a standalone program once:
-
-1. On a Windows PC with Python installed, double-click **`BUILD_EXE.bat`**.
-2. When it finishes, your program is **`dist\XPLAN.exe`**.
-3. Keep `XPLAN.exe` and `xplan_data.json` together in one folder.
+## Run without building (needs Python)
+Double-click **`run_XPLAN.bat`** to start straight from the source. In this mode
+the data file lives next to the program.
 
 ## Your data
+- Script mode: `xplan_data.json` next to the program.
+- Single-exe mode: `%APPDATA%\XPLAN\xplan_data.json`.
+- Backups are written to a `backups` folder on every start and save.
+- Forgot the password? Delete the `"password"` entry inside `xplan_data.json`
+  (in the data folder) and the program will ask you to set a new one.
 
-- Everything is stored in **`xplan_data.json`** next to the program — plain,
-  portable, easy to back up (just copy the file).
-- A timestamped copy is written to the **`backups`** folder every time you
-  start the program and every time it saves, so you can always roll back.
-- To move to another computer, copy the whole `XPLAN` folder.
-
-## Files in this folder
+## Files
 
 | File | What it is |
 |---|---|
 | `xplan.py` | The program. |
-| `xplan_data.json` | Your clients and payments (live data). |
-| `run_XPLAN.bat` | Double-click to start on Windows. |
-| `BUILD_EXE.bat` | Optional: build a standalone `XPLAN.exe`. |
-| `backups/` | Automatic backups of your data. |
+| `xplan_data.json` | Your clients & payments (script mode / build seed). |
+| `run_XPLAN.bat` | Run from source (needs Python). |
+| `BUILD_EXE.bat` | Build one standalone `XPLAN.exe` (needs Python once). |
+| `backups/` | Automatic backups. |
