@@ -19,11 +19,15 @@ jobs:
           python-version: "3.12"
       - name: Install build tools
         run: python -m pip install --upgrade pyinstaller openpyxl
-      - name: Build single-file exe
+      - name: Build single-file windowed exe
         run: pyinstaller --onefile --windowed --name XPLAN xplan.py
-      - name: Upload exe
+      - name: Build single-file console exe (for diagnosing startup errors)
+        run: pyinstaller --onefile --console --name XPLAN-console xplan.py
+      - name: Upload exes
         uses: actions/upload-artifact@v4
         with:
           name: XPLAN-windows-exe
-          path: XPLAN/dist/XPLAN.exe
+          path: |
+            XPLAN/dist/XPLAN.exe
+            XPLAN/dist/XPLAN-console.exe
           if-no-files-found: error
