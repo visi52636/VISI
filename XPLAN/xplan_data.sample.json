@@ -1,0 +1,10 @@
+{
+  "currency": "€",
+  "payment_methods": [
+    "Cash",
+    "Bank Transfer",
+    "Card",
+    "Other"
+  ],
+  "clients": []
+}

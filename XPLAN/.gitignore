@@ -1,0 +1,6 @@
+# Never commit real client/payment data — it is private and stays local only.
+xplan_data.json
+backups/*.json
+
+__pycache__/
+*.pyc
