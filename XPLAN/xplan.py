@@ -4,32 +4,38 @@
 XPLAN - Client & Payment Manager
 =================================
 A local, password-protected desktop program (Windows / macOS / Linux) for
-tracking architecture / design studio clients and their payments.
+tracking architecture / design studio clients, their projects and payments.
 
 Built from the "PGS_KLNT" Excel workbook. Terminology kept close to the
 original sheet:
 
     KLIENTI            -> Client
+    KONTRAKTUESI       -> Contractor
     VLERA E KONTRATES  -> Contract Value
-    PAGESA 1..N        -> Payment 1..N
+    PAGESA 1..N        -> Payment 1..N (from the client)
     DATA E PAGESES     -> Payment Date
     TE DHENA           -> Paid (total received)
     TE MBETURA         -> Remaining (balance)
     PERMBLEDHJE/TOTALI -> Summary
 
+Money is tracked in TWO categories, like the original sheet:
+    * Payments from the client      (income against the contract)
+    * Commissions from contractors  (ATMOSFERE, PORCELANOSA, OZ, ...)
+
+    Remaining       = Contract value - Payments from client
+    Total received  = Payments from client + Contractor commissions
+
 Features
-    - Password lock on open (PBKDF2-SHA256, stored salted in the data file).
-    - Clients grouped by year (collapsible).
-    - Payments & Charts section: totals by year and by month, drawn as bar
-      charts (no external libraries needed).
-    - Minimalist, modern interface.
-    - Add clients, add/edit/delete payments, manage payment methods.
+    - Password lock on open (PBKDF2-SHA256, salted, stored in the data file).
+    - Clients grouped by year; open a client for its full project ledger.
+    - Payments & Charts: totals by year and by month, as bar charts, with a
+      filter for client payments / contractor commissions / both.
+    - Add clients, add/edit/delete payments and commissions, manage methods.
     - Local JSON storage with automatic timestamped backups.
     - Export to Excel (openpyxl, optional) or CSV.
 
 Core app uses ONLY the Python standard library, so it runs on any standard
-Python installation with no extra downloads. (Excel export uses 'openpyxl'
-if present.)
+Python installation with no extra downloads.
 """
 
 import os
@@ -49,16 +55,17 @@ APP_TITLE = "XPLAN — Client & Payment Manager"
 # --------------------------------------------------------------------------- #
 #  Modern minimalist palette & fonts
 # --------------------------------------------------------------------------- #
-BG       = "#f4f5f7"   # app background
-CARD     = "#ffffff"   # cards / panels
-INK      = "#1f2933"   # primary text
-MUTED    = "#7b8794"   # secondary text
-ACCENT   = "#3b82f6"   # primary accent (blue)
+BG       = "#f4f5f7"
+CARD     = "#ffffff"
+INK      = "#1f2933"
+MUTED    = "#7b8794"
+ACCENT   = "#3b82f6"   # client payments (blue)
 ACCENT_DK= "#2563eb"
 GREEN    = "#15a34a"
 RED      = "#dc2626"
-LINE     = "#e4e7eb"   # hairline borders
-SIDEBAR  = "#111827"   # dark sidebar
+AMBER    = "#f59e0b"   # contractor commissions (amber)
+LINE     = "#e4e7eb"
+SIDEBAR  = "#111827"
 SIDE_TXT = "#cbd5e1"
 SIDE_SEL = "#1f2937"
 GRID     = "#eceef1"
@@ -81,21 +88,76 @@ def _font(size=10, bold=False):
 # --------------------------------------------------------------------------- #
 #  Paths & persistence
 # --------------------------------------------------------------------------- #
-def app_dir():
-    if getattr(sys, "frozen", False):          # PyInstaller .exe
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+def data_dir():
+    """Where the live data file lives.
+
+    A single-file .exe keeps its data in a stable per-user folder so the
+    program itself can stay ONE standalone file. When run as a plain script
+    (e.g. via run_XPLAN.bat) the data sits next to the script.
+    """
+    if getattr(sys, "frozen", False):
+        if sys.platform.startswith("win"):
+            base = os.environ.get("APPDATA") or os.path.expanduser("~")
+            d = os.path.join(base, "XPLAN")
+        elif sys.platform == "darwin":
+            d = os.path.join(os.path.expanduser("~/Library/Application Support"), "XPLAN")
+        else:
+            d = os.path.join(os.path.expanduser("~/.local/share"), "XPLAN")
+    else:
+        d = os.path.dirname(os.path.abspath(__file__))
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        d = os.path.dirname(os.path.abspath(__file__))
+    return d
 
 
-DATA_FILE = os.path.join(app_dir(), "xplan_data.json")
-BACKUP_DIR = os.path.join(app_dir(), "backups")
+DATA_DIR = data_dir()
+DATA_FILE = os.path.join(DATA_DIR, "xplan_data.json")
+BACKUP_DIR = os.path.join(DATA_DIR, "backups")
+
+
+def seed_if_needed():
+    """On first run of a bundled .exe, copy embedded seed data to DATA_FILE."""
+    if os.path.exists(DATA_FILE):
+        return
+    base = getattr(sys, "_MEIPASS", None)
+    if not base:
+        return
+    seed = os.path.join(base, "xplan_seed.json")
+    if os.path.exists(seed):
+        try:
+            shutil.copy2(seed, DATA_FILE)
+        except Exception:
+            pass
 
 DEFAULT_DATA = {
     "currency": "€",
     "payment_methods": ["Cash", "Bank Transfer", "Card", "Other"],
-    "password": None,          # {"salt": b64, "hash": b64}
+    "password": None,
     "clients": [],
 }
+
+
+def load_data_normalize(data):
+    data.setdefault("currency", "€")
+    data.setdefault("payment_methods", ["Cash", "Bank Transfer", "Card", "Other"])
+    data.setdefault("password", None)
+    data.setdefault("clients", [])
+    for c in data["clients"]:
+        c.setdefault("name", "Unnamed")
+        c.setdefault("contract_value", 0.0)
+        c.setdefault("payments", [])
+        c.setdefault("year", None)
+        if "commissions" not in c:
+            c["commissions"] = c.pop("extras", [])
+        for cm in c["commissions"]:
+            cm.setdefault("name", cm.get("contractor", "Contractor"))
+            cm.setdefault("amount", 0.0)
+            cm.setdefault("date", "")
+            cm.setdefault("method", "")
+            cm.setdefault("note", "")
+    return data
 
 
 def load_data():
@@ -108,17 +170,7 @@ def load_data():
         messagebox.showerror("Data error",
                              "Could not read data file:\n%s\n\n%s" % (DATA_FILE, e))
         return dict(DEFAULT_DATA)
-    data.setdefault("currency", "€")
-    data.setdefault("payment_methods", ["Cash", "Bank Transfer", "Card", "Other"])
-    data.setdefault("password", None)
-    data.setdefault("clients", [])
-    for c in data["clients"]:
-        c.setdefault("name", "Unnamed")
-        c.setdefault("contract_value", 0.0)
-        c.setdefault("payments", [])
-        c.setdefault("extras", [])
-        c.setdefault("year", None)
-    return data
+    return load_data_normalize(data)
 
 
 def make_backup(tag="start"):
@@ -152,7 +204,7 @@ def save_data(data):
 
 
 # --------------------------------------------------------------------------- #
-#  Password helpers (PBKDF2-SHA256)
+#  Password helpers
 # --------------------------------------------------------------------------- #
 def hash_password(pw, salt=None):
     if salt is None:
@@ -183,7 +235,6 @@ def to_float(value, default=0.0):
 
 
 def parse_date(s):
-    """Return (year, month) from a stored date string, or (None, None)."""
     if not s:
         return (None, None)
     if isinstance(s, (datetime.date, datetime.datetime)):
@@ -206,8 +257,8 @@ def paid_of(c):
     return sum(to_float(p.get("amount")) for p in c.get("payments", []))
 
 
-def extras_of(c):
-    return sum(to_float(e.get("amount")) for e in c.get("extras", []))
+def commissions_of(c):
+    return sum(to_float(e.get("amount")) for e in c.get("commissions", []))
 
 
 def remaining_of(c):
@@ -215,11 +266,10 @@ def remaining_of(c):
 
 
 def total_received_of(c):
-    return paid_of(c) + extras_of(c)
+    return paid_of(c) + commissions_of(c)
 
 
 def client_year(c):
-    """Year a client belongs to: explicit field, else earliest payment year."""
     if c.get("year"):
         return int(c["year"])
     yrs = [parse_date(p.get("date"))[0] for p in c.get("payments", [])]
@@ -231,53 +281,48 @@ def today_str():
     return datetime.date.today().strftime("%d/%m/%Y")
 
 
-def iter_money_items(c, include_extras=True):
-    items = list(c.get("payments", []))
-    if include_extras:
-        items += c.get("extras", [])
-    return items
+def money_items(c, which="all"):
+    """which: 'client' | 'commission' | 'all'."""
+    out = []
+    if which in ("client", "all"):
+        out += c.get("payments", [])
+    if which in ("commission", "all"):
+        out += c.get("commissions", [])
+    return out
 
 
 # --------------------------------------------------------------------------- #
-#  Bar chart widget (pure tkinter Canvas)
+#  Bar chart widget
 # --------------------------------------------------------------------------- #
 class BarChart(tk.Canvas):
-    def __init__(self, parent, money_fmt, bar_color=ACCENT, **kw):
+    def __init__(self, parent, bar_color=ACCENT, **kw):
         super().__init__(parent, bg=CARD, highlightthickness=0, **kw)
-        self.money_fmt = money_fmt
         self.bar_color = bar_color
-        self.pairs = []          # list of (label, value)
+        self.pairs = []
         self.bind("<Configure>", lambda e: self.redraw())
 
-    def set_data(self, pairs):
+    def set_data(self, pairs, color=None):
         self.pairs = pairs
+        if color:
+            self.bar_color = color
         self.redraw()
 
     def redraw(self):
         self.delete("all")
-        w = self.winfo_width()
-        h = self.winfo_height()
+        w, h = self.winfo_width(), self.winfo_height()
         if w < 40 or h < 40:
             return
         pad_l, pad_r, pad_t, pad_b = 54, 16, 22, 34
-        plot_w = w - pad_l - pad_r
-        plot_h = h - pad_t - pad_b
-        if not self.pairs:
-            self.create_text(w / 2, h / 2, text="No dated payments to show",
-                             fill=MUTED, font=_font(10))
-            return
-        vmax = max((v for _, v in self.pairs), default=0)
-        if vmax <= 0:
+        plot_w, plot_h = w - pad_l - pad_r, h - pad_t - pad_b
+        if not self.pairs or max((v for _, v in self.pairs), default=0) <= 0:
             self.create_text(w / 2, h / 2, text="No payments in this period",
                              fill=MUTED, font=_font(10))
             return
-        # nice axis max
+        vmax = max(v for _, v in self.pairs)
         step = _nice_step(vmax)
         axis_max = step * (int(vmax / step) + 1)
-        # gridlines + y labels
-        lines = 4
-        for i in range(lines + 1):
-            val = axis_max * i / lines
+        for i in range(5):
+            val = axis_max * i / 4
             y = pad_t + plot_h - (val / axis_max) * plot_h
             self.create_line(pad_l, y, w - pad_r, y, fill=GRID)
             self.create_text(pad_l - 8, y, text=self._short(val), anchor="e",
@@ -288,15 +333,12 @@ class BarChart(tk.Canvas):
         for i, (label, val) in enumerate(self.pairs):
             cx = pad_l + slot * i + slot / 2
             bh = (val / axis_max) * plot_h if val > 0 else 0
-            x0, x1 = cx - bw / 2, cx + bw / 2
-            y0, y1 = pad_t + plot_h - bh, pad_t + plot_h
             if bh > 0:
-                self.create_rectangle(x0, y0, x1, y1, fill=self.bar_color,
-                                      outline=self.bar_color)
-                self.create_text(cx, y0 - 8, text=self._short(val),
+                self.create_rectangle(cx - bw / 2, pad_t + plot_h - bh, cx + bw / 2,
+                                      pad_t + plot_h, fill=self.bar_color, outline=self.bar_color)
+                self.create_text(cx, pad_t + plot_h - bh - 8, text=self._short(val),
                                  fill=INK, font=_font(8, True))
-            self.create_text(cx, pad_t + plot_h + 14, text=str(label),
-                             fill=MUTED, font=_font(8))
+            self.create_text(cx, pad_t + plot_h + 14, text=str(label), fill=MUTED, font=_font(8))
 
     def _short(self, v):
         v = float(v)
@@ -337,7 +379,7 @@ class _BaseDialog(tk.Toplevel):
 
 
 class PaymentDialog(_BaseDialog):
-    def __init__(self, parent, methods, currency, payment=None, title="Add Payment"):
+    def __init__(self, parent, methods, currency, payment=None, title="Add Payment from Client"):
         super().__init__(parent, title)
         payment = payment or {}
         f = _font(10)
@@ -345,23 +387,19 @@ class PaymentDialog(_BaseDialog):
         self.amount = ttk.Entry(self, width=26, font=f)
         self.amount.grid(row=0, column=1, pady=5)
         self.amount.insert(0, "" if payment.get("amount") in (None, "") else str(payment.get("amount")))
-
         ttk.Label(self, text="Date (dd/mm/yyyy)").grid(row=1, column=0, sticky="w", pady=5)
         self.date = ttk.Entry(self, width=26, font=f)
         self.date.grid(row=1, column=1, pady=5)
         self.date.insert(0, payment.get("date") or today_str())
-
         ttk.Label(self, text="Method").grid(row=2, column=0, sticky="w", pady=5)
         self.method = ttk.Combobox(self, width=23, values=methods, state="readonly", font=f)
         self.method.grid(row=2, column=1, pady=5)
         cur = payment.get("method") or (methods[0] if methods else "")
         self.method.set(cur if cur in methods else (methods[0] if methods else ""))
-
         ttk.Label(self, text="Note").grid(row=3, column=0, sticky="w", pady=5)
         self.note = ttk.Entry(self, width=26, font=f)
         self.note.grid(row=3, column=1, pady=5)
         self.note.insert(0, payment.get("note") or "")
-
         btns = ttk.Frame(self)
         btns.grid(row=4, column=0, columnspan=2, pady=(14, 0), sticky="e")
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="right", padx=4)
@@ -381,33 +419,33 @@ class PaymentDialog(_BaseDialog):
         self.destroy()
 
 
-class ExtraDialog(_BaseDialog):
-    def __init__(self, parent, methods, currency, extra=None, title="Add Extra Item"):
+class CommissionDialog(_BaseDialog):
+    def __init__(self, parent, methods, currency, item=None, title="Add Contractor Commission"):
         super().__init__(parent, title)
-        extra = extra or {}
+        item = item or {}
         f = _font(10)
-        ttk.Label(self, text="Item name").grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Label(self, text="Contractor name").grid(row=0, column=0, sticky="w", pady=5)
         self.name = ttk.Entry(self, width=26, font=f)
         self.name.grid(row=0, column=1, pady=5)
-        self.name.insert(0, extra.get("name") or "")
-
-        ttk.Label(self, text="Amount (%s)" % currency).grid(row=1, column=0, sticky="w", pady=5)
+        self.name.insert(0, item.get("name") or "")
+        ttk.Label(self, text="Commission (%s)" % currency).grid(row=1, column=0, sticky="w", pady=5)
         self.amount = ttk.Entry(self, width=26, font=f)
         self.amount.grid(row=1, column=1, pady=5)
-        self.amount.insert(0, "" if extra.get("amount") in (None, "") else str(extra.get("amount")))
-
+        self.amount.insert(0, "" if item.get("amount") in (None, "") else str(item.get("amount")))
         ttk.Label(self, text="Date (dd/mm/yyyy)").grid(row=2, column=0, sticky="w", pady=5)
         self.date = ttk.Entry(self, width=26, font=f)
         self.date.grid(row=2, column=1, pady=5)
-        self.date.insert(0, extra.get("date") or today_str())
-
+        self.date.insert(0, item.get("date") or today_str())
         ttk.Label(self, text="Method").grid(row=3, column=0, sticky="w", pady=5)
         self.method = ttk.Combobox(self, width=23, values=methods, state="readonly", font=f)
         self.method.grid(row=3, column=1, pady=5)
-        self.method.set(extra.get("method") if extra.get("method") in methods else (methods[0] if methods else ""))
-
+        self.method.set(item.get("method") if item.get("method") in methods else (methods[0] if methods else ""))
+        ttk.Label(self, text="Note").grid(row=4, column=0, sticky="w", pady=5)
+        self.note = ttk.Entry(self, width=26, font=f)
+        self.note.grid(row=4, column=1, pady=5)
+        self.note.insert(0, item.get("note") or "")
         btns = ttk.Frame(self)
-        btns.grid(row=4, column=0, columnspan=2, pady=(14, 0), sticky="e")
+        btns.grid(row=5, column=0, columnspan=2, pady=(14, 0), sticky="e")
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="right", padx=4)
         ttk.Button(btns, text="OK", style="Accent.TButton", command=self._ok).pack(side="right")
         self.name.focus_set()
@@ -417,14 +455,15 @@ class ExtraDialog(_BaseDialog):
 
     def _ok(self):
         if not self.name.get().strip():
-            messagebox.showwarning("Missing name", "Please enter a name.", parent=self)
+            messagebox.showwarning("Missing name", "Enter the contractor's name.", parent=self)
             return
         amt = to_float(self.amount.get(), None)
         if amt is None:
             messagebox.showwarning("Invalid amount", "Please enter a number.", parent=self)
             return
         self.result = {"name": self.name.get().strip(), "amount": amt,
-                       "date": self.date.get().strip(), "method": self.method.get().strip(), "note": ""}
+                       "date": self.date.get().strip(), "method": self.method.get().strip(),
+                       "note": self.note.get().strip()}
         self.destroy()
 
 
@@ -435,29 +474,24 @@ class ClientDialog(_BaseDialog):
         client = client or {}
         self._editing = bool(client)
         f = _font(10)
-
         ttk.Label(self, text="Client name").grid(row=0, column=0, sticky="w", pady=5)
         self.name = ttk.Entry(self, width=30, font=f)
         self.name.grid(row=0, column=1, pady=5)
         self.name.insert(0, client.get("name") or "")
-
         ttk.Label(self, text="Contract value (%s)" % currency).grid(row=1, column=0, sticky="w", pady=5)
         self.contract = ttk.Entry(self, width=30, font=f)
         self.contract.grid(row=1, column=1, pady=5)
         self.contract.insert(0, "" if client.get("contract_value") in (None, "") else str(client.get("contract_value", "")))
-
         ttk.Label(self, text="Year").grid(row=2, column=0, sticky="w", pady=5)
         yr_now = datetime.date.today().year
         years = [""] + [str(y) for y in range(yr_now + 1, 2021, -1)]
         self.year = ttk.Combobox(self, width=27, values=years, font=f)
         self.year.grid(row=2, column=1, pady=5)
         self.year.set(str(client.get("year")) if client.get("year") else "")
-
         if not self._editing:
             self.add_first = tk.BooleanVar(value=False)
             ttk.Checkbutton(self, text="Also record a first payment now",
                             variable=self.add_first).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 2))
-
         btns = ttk.Frame(self)
         btns.grid(row=4, column=0, columnspan=2, pady=(14, 0), sticky="e")
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="right", padx=4)
@@ -480,7 +514,7 @@ class ClientDialog(_BaseDialog):
             try:
                 year = int(self.year.get().strip())
             except ValueError:
-                messagebox.showwarning("Invalid year", "Year must be a number like 2025.", parent=self)
+                messagebox.showwarning("Invalid year", "Year must be like 2025.", parent=self)
                 return
         result = {"name": name, "contract_value": contract, "year": year}
         if not self._editing and self.add_first.get():
@@ -539,23 +573,18 @@ class MethodsDialog(_BaseDialog):
 
 
 class PasswordDialog(tk.Toplevel):
-    """Login (mode='login') or set a new password (mode='set')."""
     def __init__(self, parent, mode, verify_record=None):
         super().__init__(parent)
-        self.mode = mode
-        self.verify_record = verify_record
-        self.result = None
+        self.mode, self.verify_record, self.result = mode, verify_record, None
         self.title("XPLAN")
         self.configure(bg=CARD)
         self.resizable(False, False)
         self.transient(parent)
-
         wrap = tk.Frame(self, bg=CARD, padx=34, pady=30)
         wrap.pack()
         tk.Label(wrap, text="XPLAN", bg=CARD, fg=INK, font=_font(22, True)).pack()
         sub = "Set a password to protect your data" if mode == "set" else "Enter your password"
         tk.Label(wrap, text=sub, bg=CARD, fg=MUTED, font=_font(10)).pack(pady=(2, 16))
-
         self.pw1 = ttk.Entry(wrap, show="•", width=28, font=_font(11), justify="center")
         self.pw1.pack(ipady=3)
         if mode == "set":
@@ -567,7 +596,6 @@ class PasswordDialog(tk.Toplevel):
         self.msg.pack(pady=(10, 4))
         ttk.Button(wrap, text="Unlock" if mode == "login" else "Set password",
                    style="Accent.TButton", command=self._ok).pack(fill="x", pady=(4, 0))
-
         self.pw1.focus_set()
         self.bind("<Return>", lambda e: self._ok())
         self.bind("<Escape>", lambda e: self._cancel())
@@ -586,20 +614,15 @@ class PasswordDialog(tk.Toplevel):
         pw = self.pw1.get()
         if self.mode == "set":
             if len(pw) < 4:
-                self.msg.config(text="Use at least 4 characters.")
-                return
+                self.msg.config(text="Use at least 4 characters."); return
             if pw != self.pw2.get():
-                self.msg.config(text="Passwords do not match.")
-                return
-            self.result = ("set", pw)
-            self.destroy()
+                self.msg.config(text="Passwords do not match."); return
+            self.result = ("set", pw); self.destroy()
         else:
             if verify_password(pw, self.verify_record):
-                self.result = ("ok", pw)
-                self.destroy()
+                self.result = ("ok", pw); self.destroy()
             else:
-                self.msg.config(text="Wrong password.")
-                self.pw1.delete(0, "end")
+                self.msg.config(text="Wrong password."); self.pw1.delete(0, "end")
 
     def _cancel(self):
         self.result = None
@@ -612,6 +635,7 @@ class PasswordDialog(tk.Toplevel):
 class XplanApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        seed_if_needed()
         self.data = load_data()
         make_backup("start")
         self.ok = False
@@ -619,12 +643,11 @@ class XplanApp(tk.Tk):
         self.current_page = "clients"
 
         self.title(APP_TITLE)
-        self.geometry("1120x700")
-        self.minsize(960, 600)
+        self.geometry("1140x720")
+        self.minsize(980, 620)
         self.configure(bg=BG)
         self._setup_style()
 
-        # Password gate -------------------------------------------------- #
         self.withdraw()
         if not self._authenticate():
             self.destroy()
@@ -639,7 +662,6 @@ class XplanApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.bind("<Control-s>", lambda e: self.save())
 
-    # ---- style ---------------------------------------------------------- #
     def _setup_style(self):
         st = ttk.Style(self)
         try:
@@ -650,27 +672,19 @@ class XplanApp(tk.Tk):
         st.configure("TFrame", background=BG)
         st.configure("Card.TFrame", background=CARD)
         st.configure("TLabel", background=BG, foreground=INK)
-        st.configure("Card.TLabel", background=CARD, foreground=INK)
-        st.configure("Muted.TLabel", background=CARD, foreground=MUTED)
-        st.configure("H1.TLabel", background=BG, foreground=INK, font=_font(16, True))
-        st.configure("H2.TLabel", background=CARD, foreground=INK, font=_font(12, True))
-        st.configure("Stat.TLabel", background=CARD, foreground=INK, font=_font(18, True))
-        st.configure("TButton", padding=(12, 7), relief="flat",
-                     background="#e8eaed", foreground=INK, font=_font(10))
+        st.configure("TButton", padding=(12, 7), relief="flat", background="#e8eaed",
+                     foreground=INK, font=_font(10))
         st.map("TButton", background=[("active", "#dfe2e6")])
         st.configure("Accent.TButton", background=ACCENT, foreground="#ffffff",
                      padding=(14, 8), font=_font(10, True))
         st.map("Accent.TButton", background=[("active", ACCENT_DK)])
         st.configure("TEntry", fieldbackground=CARD, bordercolor=LINE, relief="flat")
         st.configure("TCombobox", fieldbackground=CARD, relief="flat")
-        # Treeview
         st.configure("Treeview", background=CARD, fieldbackground=CARD, foreground=INK,
                      rowheight=26, borderwidth=0, font=_font(10))
-        st.configure("Treeview.Heading", background=BG, foreground=MUTED,
-                     relief="flat", font=_font(9, True))
+        st.configure("Treeview.Heading", background=BG, foreground=MUTED, relief="flat", font=_font(9, True))
         st.map("Treeview", background=[("selected", "#e6efff")], foreground=[("selected", INK)])
 
-    # ---- auth ----------------------------------------------------------- #
     def _authenticate(self):
         rec = self.data.get("password")
         if not rec:
@@ -692,7 +706,6 @@ class XplanApp(tk.Tk):
                 return False
         return False
 
-    # ---- currency / format --------------------------------------------- #
     @property
     def currency(self):
         return self.data.get("currency", "€")
@@ -707,8 +720,7 @@ class XplanApp(tk.Tk):
         bar.pack_propagate(False)
         tk.Frame(self, bg=LINE, height=1).pack(side="top", fill="x")
         tk.Label(bar, text="XPLAN", bg=CARD, fg=INK, font=_font(16, True)).pack(side="left", padx=(20, 6))
-        tk.Label(bar, text="Client & Payment Manager", bg=CARD, fg=MUTED,
-                 font=_font(10)).pack(side="left")
+        tk.Label(bar, text="Client & Payment Manager", bg=CARD, fg=MUTED, font=_font(10)).pack(side="left")
         self.header_stat = tk.Label(bar, text="", bg=CARD, fg=MUTED, font=_font(10))
         self.header_stat.pack(side="right", padx=20)
         ttk.Button(bar, text="＋  Add Client", style="Accent.TButton",
@@ -718,8 +730,7 @@ class XplanApp(tk.Tk):
     def _build_sidebar(self):
         self._body = tk.Frame(self, bg=BG)
         self._body.pack(side="top", fill="both", expand=True)
-
-        side = tk.Frame(self._body, bg=SIDEBAR, width=188)
+        side = tk.Frame(self._body, bg=SIDEBAR, width=190)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         self.nav_buttons = {}
@@ -727,27 +738,24 @@ class XplanApp(tk.Tk):
                                  ("payments", "Payments & Charts", "📈")):
             b = tk.Label(side, text="  %s   %s" % (icon, label), bg=SIDEBAR, fg=SIDE_TXT,
                          font=_font(11), anchor="w", padx=12, pady=12, cursor="hand2")
-            b.pack(fill="x", pady=(6 if key == "clients" else 0, 0), padx=0)
+            b.pack(fill="x", pady=(6 if key == "clients" else 0, 0))
             b.bind("<Button-1>", lambda e, k=key: self.show_page(k))
             self.nav_buttons[key] = b
-
-        # bottom actions
         bottom = tk.Frame(side, bg=SIDEBAR)
         bottom.pack(side="bottom", fill="x", pady=10)
         for label, cmd in (("Payment Methods", self.manage_methods),
                            ("Export to Excel", self.export_excel),
                            ("Change Password", self.change_password),
                            ("Settings", self.open_settings)):
-            tk.Label(bottom, text="  "+label, bg=SIDEBAR, fg="#8a94a6", font=_font(9),
-                     anchor="w", padx=12, pady=6, cursor="hand2").pack(fill="x")\
-                .bind("<Button-1>", lambda e, c=cmd: c())
+            lab = tk.Label(bottom, text="  " + label, bg=SIDEBAR, fg="#8a94a6", font=_font(9),
+                           anchor="w", padx=12, pady=6, cursor="hand2")
+            lab.pack(fill="x")
+            lab.bind("<Button-1>", lambda e, c=cmd: c())
 
     def _highlight_nav(self):
         for k, b in self.nav_buttons.items():
-            if k == self.current_page:
-                b.configure(bg=SIDE_SEL, fg="#ffffff")
-            else:
-                b.configure(bg=SIDEBAR, fg=SIDE_TXT)
+            b.configure(bg=SIDE_SEL if k == self.current_page else SIDEBAR,
+                        fg="#ffffff" if k == self.current_page else SIDE_TXT)
 
     # ---- content -------------------------------------------------------- #
     def _build_content(self):
@@ -773,7 +781,6 @@ class XplanApp(tk.Tk):
     def _build_clients_page(self):
         page = tk.Frame(self.content, bg=BG)
         self.pages["clients"] = page
-
         pan = ttk.PanedWindow(page, orient="horizontal")
         pan.pack(fill="both", expand=True, padx=16, pady=16)
 
@@ -784,16 +791,14 @@ class XplanApp(tk.Tk):
         tk.Label(ctrl, text="Clients by year", bg=CARD, fg=INK, font=_font(12, True)).pack(side="left")
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *a: self.refresh_client_tree())
-        se = ttk.Entry(ctrl, textvariable=self.search_var, width=18, font=_font(10))
-        se.pack(side="right")
+        ttk.Entry(ctrl, textvariable=self.search_var, width=18, font=_font(10)).pack(side="right")
         tk.Label(ctrl, text="Search", bg=CARD, fg=MUTED, font=_font(9)).pack(side="right", padx=(0, 6))
 
         self.ctree = ttk.Treeview(left, columns=("contract", "paid", "remaining"),
                                   show="tree headings", selectmode="browse")
         self.ctree.heading("#0", text="Client")
-        self.ctree.column("#0", width=200, stretch=True)
-        for key, txt, w in (("contract", "Contract", 90), ("paid", "Paid", 90),
-                            ("remaining", "Remaining", 90)):
+        self.ctree.column("#0", width=210, stretch=True)
+        for key, txt, w in (("contract", "Contract", 90), ("paid", "Paid", 90), ("remaining", "Remaining", 90)):
             self.ctree.heading(key, text=txt)
             self.ctree.column(key, width=w, anchor="e", stretch=False)
         self.ctree.tag_configure("year", font=_font(10, True), foreground=INK)
@@ -813,34 +818,27 @@ class XplanApp(tk.Tk):
     def refresh_client_tree(self):
         q = (self.search_var.get() if hasattr(self, "search_var") else "").strip().lower()
         self.ctree.delete(*self.ctree.get_children())
-        # group clients by year
         groups = {}
         for c in self.data["clients"]:
             if q and q not in c["name"].lower():
                 continue
-            y = client_year(c)
-            groups.setdefault(y, []).append(c)
-        # order years newest first; None ("Unspecified") last
-        def order(y):
-            return (-1 if y is None else 0, -(y or 0))
+            groups.setdefault(client_year(c), []).append(c)
+        order = lambda y: (-1 if y is None else 0, -(y or 0))
         for y in sorted(groups.keys(), key=order):
             label = str(y) if y else "Unspecified year"
-            gclients = sorted(groups[y], key=lambda c: c["name"].lower())
-            gcontract = sum(to_float(c.get("contract_value")) for c in gclients)
-            gpaid = sum(paid_of(c) for c in gclients)
-            grem = sum(remaining_of(c) for c in gclients)
+            gcl = sorted(groups[y], key=lambda c: c["name"].lower())
             parent = self.ctree.insert("", "end", iid="year::%s" % label, open=True,
-                                       text="%s   (%d)" % (label, len(gclients)),
-                                       values=(self.money(gcontract), self.money(gpaid), self.money(grem)),
+                                       text="%s   (%d)" % (label, len(gcl)),
+                                       values=(self.money(sum(to_float(c.get("contract_value")) for c in gcl)),
+                                               self.money(sum(paid_of(c) for c in gcl)),
+                                               self.money(sum(remaining_of(c) for c in gcl))),
                                        tags=("year",))
-            for c in gclients:
+            for c in gcl:
                 rem = remaining_of(c)
-                tag = "owing" if rem > 0 else "paidoff"
-                self.ctree.insert(parent, "end", iid="client::%s" % c["name"],
-                                  text="   " + c["name"],
-                                  values=(self.money(c.get("contract_value")),
-                                          self.money(paid_of(c)), self.money(rem)),
-                                  tags=(tag,))
+                self.ctree.insert(parent, "end", iid="client::%s" % c["name"], text="   " + c["name"],
+                                  values=(self.money(c.get("contract_value")), self.money(paid_of(c)),
+                                          self.money(rem)),
+                                  tags=("owing" if rem > 0 else "paidoff",))
         if self.selected_client:
             iid = "client::%s" % self.selected_client["name"]
             if self.ctree.exists(iid):
@@ -868,164 +866,180 @@ class XplanApp(tk.Tk):
 
     def _build_detail_empty(self):
         self._clear_detail()
-        tk.Label(self.detail, text="Select a client,\nor use ＋ Add Client.",
+        tk.Label(self.detail, text="Select a client to open its project,\nor use ＋ Add Client.",
                  bg=CARD, fg=MUTED, font=_font(13), justify="center").place(relx=0.5, rely=0.45, anchor="center")
+
+    def _stat_card(self, parent, col, label, value, fg):
+        card = tk.Frame(parent, bg=BG)
+        card.grid(row=0, column=col, padx=4, pady=4, sticky="nsew")
+        parent.columnconfigure(col, weight=1)
+        tk.Label(card, text=label, bg=BG, fg=MUTED, font=_font(8)).pack(anchor="w", padx=10, pady=(9, 0))
+        tk.Label(card, text=value, bg=BG, fg=fg, font=_font(14, True)).pack(anchor="w", padx=10, pady=(0, 9))
 
     def _build_detail(self, c):
         self._clear_detail()
         d = self.detail
+        # scrollable container so a long ledger fits
         head = tk.Frame(d, bg=CARD)
         head.pack(fill="x", padx=16, pady=(14, 2))
         tk.Label(head, text=c["name"], bg=CARD, fg=INK, font=_font(15, True)).pack(side="left")
-        y = client_year(c)
-        tk.Label(head, text="  ·  %s" % (y or "year not set"), bg=CARD, fg=MUTED, font=_font(10)).pack(side="left")
+        tk.Label(head, text="   project ledger · %s" % (client_year(c) or "year not set"),
+                 bg=CARD, fg=MUTED, font=_font(10)).pack(side="left")
         ttk.Button(head, text="Delete", command=self.delete_client).pack(side="right")
         ttk.Button(head, text="Edit", command=self.edit_client).pack(side="right", padx=(0, 6))
 
         info = tk.Frame(d, bg=CARD)
         info.pack(fill="x", padx=12, pady=6)
-        contract, paid, rem, extras = (to_float(c.get("contract_value")), paid_of(c),
-                                       remaining_of(c), extras_of(c))
-        cells = [("Contract (Vlera)", self.money(contract), INK),
-                 ("Paid (Të Dhëna)", self.money(paid), GREEN),
-                 ("Remaining (Të Mbetura)", self.money(rem), RED if rem > 0 else GREEN)]
-        if extras:
-            cells.append(("Extras", self.money(extras), INK))
-        for i, (lbl, val, fg) in enumerate(cells):
-            card = tk.Frame(info, bg=BG)
-            card.grid(row=0, column=i, padx=4, pady=4, sticky="nsew")
-            info.columnconfigure(i, weight=1)
-            tk.Label(card, text=lbl, bg=BG, fg=MUTED, font=_font(9)).pack(anchor="w", padx=12, pady=(10, 0))
-            tk.Label(card, text=val, bg=BG, fg=fg, font=_font(16, True)).pack(anchor="w", padx=12, pady=(0, 10))
+        contract, paid, rem, com = (to_float(c.get("contract_value")), paid_of(c),
+                                    remaining_of(c), commissions_of(c))
+        self._stat_card(info, 0, "CONTRACT (Vlera)", self.money(contract), INK)
+        self._stat_card(info, 1, "PAID BY CLIENT (Të Dhëna)", self.money(paid), ACCENT)
+        self._stat_card(info, 2, "REMAINING (Të Mbetura)", self.money(rem), RED if rem > 0 else GREEN)
+        self._stat_card(info, 3, "CONTRACTOR COMMISSIONS", self.money(com), AMBER)
+        self._stat_card(info, 4, "TOTAL RECEIVED", self.money(paid + com), GREEN)
 
+        # ---- payments from client ---- #
         ph = tk.Frame(d, bg=CARD)
-        ph.pack(fill="x", padx=16, pady=(12, 4))
-        tk.Label(ph, text="Payments", bg=CARD, fg=INK, font=_font(11, True)).pack(side="left")
-        ttk.Button(ph, text="＋ Add Payment", style="Accent.TButton", command=self.add_payment).pack(side="right")
+        ph.pack(fill="x", padx=16, pady=(14, 4))
+        tk.Label(ph, text="● Payments from client", bg=CARD, fg=ACCENT, font=_font(11, True)).pack(side="left")
+        ttk.Button(ph, text="＋ Add", style="Accent.TButton", command=self.add_payment).pack(side="right")
         ttk.Button(ph, text="Edit", command=self.edit_payment).pack(side="right", padx=(0, 6))
         ttk.Button(ph, text="Delete", command=self.delete_payment).pack(side="right", padx=(0, 6))
-
         self.pay_tree = ttk.Treeview(d, columns=("no", "date", "amount", "method", "note"),
-                                     show="headings", height=7, selectmode="browse")
+                                     show="headings", height=6, selectmode="browse")
         for key, txt, w, a in (("no", "#", 34, "center"), ("date", "Date", 96, "center"),
                                ("amount", "Amount", 104, "e"), ("method", "Method", 120, "w"),
-                               ("note", "Note", 160, "w")):
+                               ("note", "Note", 150, "w")):
             self.pay_tree.heading(key, text=txt)
             self.pay_tree.column(key, width=w, anchor=a, stretch=(key == "note"))
-        self.pay_tree.pack(fill="both", expand=True, padx=16)
+        self.pay_tree.pack(fill="x", padx=16)
         self.pay_tree.bind("<Double-1>", lambda e: self.edit_payment())
         for i, p in enumerate(c.get("payments", []), 1):
             self.pay_tree.insert("", "end", iid=str(i - 1),
                                  values=(i, p.get("date", ""), self.money(p.get("amount")),
                                          p.get("method", ""), p.get("note", "")))
 
+        # ---- contractor commissions ---- #
         eh = tk.Frame(d, bg=CARD)
-        eh.pack(fill="x", padx=16, pady=(12, 4))
-        tk.Label(eh, text="Extra items", bg=CARD, fg=INK, font=_font(11, True)).pack(side="left")
-        ttk.Button(eh, text="＋ Add Extra", command=self.add_extra).pack(side="right")
-        ttk.Button(eh, text="Delete", command=self.delete_extra).pack(side="right", padx=(0, 6))
-        self.ex_tree = ttk.Treeview(d, columns=("name", "date", "amount", "method"),
-                                    show="headings", height=4, selectmode="browse")
-        for key, txt, w, a in (("name", "Item", 190, "w"), ("date", "Date", 96, "center"),
-                               ("amount", "Amount", 104, "e"), ("method", "Method", 120, "w")):
-            self.ex_tree.heading(key, text=txt)
-            self.ex_tree.column(key, width=w, anchor=a, stretch=(key == "name"))
-        self.ex_tree.pack(fill="both", expand=False, padx=16, pady=(0, 14))
-        for i, e in enumerate(c.get("extras", [])):
-            self.ex_tree.insert("", "end", iid=str(i),
-                                values=(e.get("name", ""), e.get("date", ""),
-                                        self.money(e.get("amount")), e.get("method", "")))
+        eh.pack(fill="x", padx=16, pady=(14, 4))
+        tk.Label(eh, text="● Commissions from contractors", bg=CARD, fg=AMBER, font=_font(11, True)).pack(side="left")
+        ttk.Button(eh, text="＋ Add", command=self.add_commission).pack(side="right")
+        ttk.Button(eh, text="Edit", command=self.edit_commission).pack(side="right", padx=(0, 6))
+        ttk.Button(eh, text="Delete", command=self.delete_commission).pack(side="right", padx=(0, 6))
+        self.com_tree = ttk.Treeview(d, columns=("contractor", "date", "amount", "method", "note"),
+                                     show="headings", height=5, selectmode="browse")
+        for key, txt, w, a in (("contractor", "Contractor", 150, "w"), ("date", "Date", 96, "center"),
+                               ("amount", "Commission", 104, "e"), ("method", "Method", 120, "w"),
+                               ("note", "Note", 120, "w")):
+            self.com_tree.heading(key, text=txt)
+            self.com_tree.column(key, width=w, anchor=a, stretch=(key == "note"))
+        self.com_tree.pack(fill="x", padx=16, pady=(0, 14))
+        self.com_tree.bind("<Double-1>", lambda e: self.edit_commission())
+        for i, e in enumerate(c.get("commissions", [])):
+            self.com_tree.insert("", "end", iid=str(i),
+                                 values=(e.get("name", ""), e.get("date", ""),
+                                         self.money(e.get("amount")), e.get("method", ""), e.get("note", "")))
 
     # ---- PAYMENTS / CHARTS page ---------------------------------------- #
     def _build_payments_page(self):
         page = tk.Frame(self.content, bg=BG)
         self.pages["payments"] = page
-
-        # top controls
         top = tk.Frame(page, bg=BG)
         top.pack(fill="x", padx=16, pady=(16, 6))
         tk.Label(top, text="Payments by year & month", bg=BG, fg=INK, font=_font(16, True)).pack(side="left")
-        tk.Label(top, text="Year", bg=BG, fg=MUTED, font=_font(9)).pack(side="left", padx=(20, 4))
+        tk.Label(top, text="Show", bg=BG, fg=MUTED, font=_font(9)).pack(side="left", padx=(20, 4))
+        self.view_sel = ttk.Combobox(top, width=26, state="readonly", font=_font(10),
+                                     values=["Client payments + commissions",
+                                             "Client payments only",
+                                             "Contractor commissions only"])
+        self.view_sel.current(0)
+        self.view_sel.pack(side="left")
+        self.view_sel.bind("<<ComboboxSelected>>", lambda e: self.refresh_charts())
+        tk.Label(top, text="Year", bg=BG, fg=MUTED, font=_font(9)).pack(side="left", padx=(16, 4))
         self.chart_year = ttk.Combobox(top, width=8, state="readonly", font=_font(10))
         self.chart_year.pack(side="left")
         self.chart_year.bind("<<ComboboxSelected>>", lambda e: self._draw_month_chart())
-        self.inc_extras = tk.BooleanVar(value=True)
-        ttk.Checkbutton(top, text="Include extras", variable=self.inc_extras,
-                        command=self.refresh_charts).pack(side="left", padx=16)
 
-        # yearly chart card
         c1 = tk.Frame(page, bg=CARD, highlightbackground=LINE, highlightthickness=1)
         c1.pack(fill="x", padx=16, pady=8)
-        tk.Label(c1, text="Total received per year", bg=CARD, fg=INK, font=_font(11, True)).pack(anchor="w", padx=14, pady=(12, 0))
-        self.year_chart = BarChart(c1, self.money, bar_color=ACCENT, height=170)
-        self.year_chart.pack(fill="x", padx=10, pady=(4, 12))
+        tk.Label(c1, text="Total per year", bg=CARD, fg=INK, font=_font(11, True)).pack(anchor="w", padx=14, pady=(12, 0))
+        self.year_chart = BarChart(c1, bar_color=ACCENT, height=170)
+        self.year_chart.pack(fill="x", padx=10, pady=(4, 6))
+        self.year_summary = tk.Label(c1, text="", bg=CARD, fg=MUTED, font=_font(9))
+        self.year_summary.pack(anchor="w", padx=14, pady=(0, 12))
 
-        # monthly chart card
         c2 = tk.Frame(page, bg=CARD, highlightbackground=LINE, highlightthickness=1)
         c2.pack(fill="both", expand=True, padx=16, pady=(8, 16))
-        self.month_title = tk.Label(c2, text="Monthly payments", bg=CARD, fg=INK, font=_font(11, True))
+        self.month_title = tk.Label(c2, text="Monthly", bg=CARD, fg=INK, font=_font(11, True))
         self.month_title.pack(anchor="w", padx=14, pady=(12, 0))
-        self.month_chart = BarChart(c2, self.money, bar_color="#22c55e", height=240)
+        self.month_chart = BarChart(c2, bar_color=GREEN, height=240)
         self.month_chart.pack(fill="both", expand=True, padx=10, pady=(4, 6))
         self.month_summary = tk.Label(c2, text="", bg=CARD, fg=MUTED, font=_font(9))
         self.month_summary.pack(anchor="w", padx=14, pady=(0, 12))
 
-    def _all_years(self):
+    def _which(self):
+        return {0: "all", 1: "client", 2: "commission"}[self.view_sel.current()]
+
+    def _color(self):
+        return {"all": ACCENT, "client": ACCENT, "commission": AMBER}[self._which()]
+
+    def _all_years(self, which):
         yrs = set()
         for c in self.data["clients"]:
-            for p in iter_money_items(c, self.inc_extras.get()):
+            for p in money_items(c, which):
                 y, _ = parse_date(p.get("date"))
                 if y:
                     yrs.add(y)
         return sorted(yrs)
 
-    def payments_by_year(self):
+    def _by_year(self, which):
         agg = {}
         for c in self.data["clients"]:
-            for p in iter_money_items(c, self.inc_extras.get()):
+            for p in money_items(c, which):
                 y, _ = parse_date(p.get("date"))
                 if y:
                     agg[y] = agg.get(y, 0.0) + to_float(p.get("amount"))
         return agg
 
-    def payments_by_month(self, year):
+    def _by_month(self, year, which):
         months = [0.0] * 12
         for c in self.data["clients"]:
-            for p in iter_money_items(c, self.inc_extras.get()):
+            for p in money_items(c, which):
                 y, m = parse_date(p.get("date"))
                 if y == year and m:
                     months[m - 1] += to_float(p.get("amount"))
         return months
 
     def refresh_charts(self):
-        years = self._all_years()
-        agg = self.payments_by_year()
-        self.year_chart.set_data([(str(y), agg.get(y, 0.0)) for y in years])
-        # year selector
+        which, color = self._which(), self._color()
+        years = sorted(set(self._all_years("all")))
+        agg = self._by_year(which)
+        self.year_chart.set_data([(str(y), agg.get(y, 0.0)) for y in years], color=color)
+        ctot = sum(self._by_year("client").values())
+        mtot = sum(self._by_year("commission").values())
+        self.year_summary.config(text="Client payments: %s      Contractor commissions: %s      Total: %s"
+                                 % (self.money(ctot), self.money(mtot), self.money(ctot + mtot)))
         vals = [str(y) for y in years]
         self.chart_year["values"] = vals
-        cur = self.chart_year.get()
-        if cur not in vals:
-            cur = vals[-1] if vals else ""
-            self.chart_year.set(cur)
+        if self.chart_year.get() not in vals:
+            self.chart_year.set(vals[-1] if vals else "")
         self._draw_month_chart()
 
     def _draw_month_chart(self):
+        which, color = self._which(), self._color()
         cur = self.chart_year.get()
         if not cur:
-            self.month_chart.set_data([])
-            self.month_summary.config(text="")
-            self.month_title.config(text="Monthly payments")
-            return
+            self.month_chart.set_data([]); self.month_summary.config(text=""); return
         year = int(cur)
-        months = self.payments_by_month(year)
-        self.month_chart.set_data([(MONTHS[i], months[i]) for i in range(12)])
+        months = self._by_month(year, which)
+        self.month_chart.set_data([(MONTHS[i], months[i]) for i in range(12)], color=color)
         total = sum(months)
         best = max(range(12), key=lambda i: months[i]) if total > 0 else None
-        self.month_title.config(text="Monthly payments — %d" % year)
+        kind = {"all": "all", "client": "client payments", "commission": "commissions"}[which]
+        self.month_title.config(text="Monthly (%s) — %d" % (kind, year))
         txt = "Total %d: %s" % (year, self.money(total))
         if best is not None and months[best] > 0:
-            txt += "     Best month: %s (%s)" % (MONTHS[best], self.money(months[best]))
+            txt += "      Best month: %s (%s)" % (MONTHS[best], self.money(months[best]))
         self.month_summary.config(text=txt)
 
     # ---- header totals -------------------------------------------------- #
@@ -1045,7 +1059,7 @@ class XplanApp(tk.Tk):
             messagebox.showwarning("Duplicate", "A client with that name already exists.")
             return
         c = {"name": dlg.result["name"], "contract_value": dlg.result["contract_value"],
-             "year": dlg.result.get("year"), "payments": [], "extras": []}
+             "year": dlg.result.get("year"), "payments": [], "commissions": []}
         if dlg.result.get("first_payment"):
             c["payments"].append(dlg.result["first_payment"])
         self.data["clients"].append(c)
@@ -1079,7 +1093,7 @@ class XplanApp(tk.Tk):
         c = self.selected_client
         if not c:
             return
-        if not messagebox.askyesno("Delete client", "Delete '%s' and all its payments?" % c["name"]):
+        if not messagebox.askyesno("Delete client", "Delete '%s' and all its records?" % c["name"]):
             return
         self.data["clients"].remove(c)
         self.selected_client = None
@@ -1087,7 +1101,7 @@ class XplanApp(tk.Tk):
         self.refresh_client_tree()
         self._build_detail_empty()
 
-    # ---- payment actions ------------------------------------------------ #
+    # ---- payment (from client) actions --------------------------------- #
     def add_payment(self):
         c = self.selected_client
         if not c:
@@ -1097,10 +1111,10 @@ class XplanApp(tk.Tk):
             c.setdefault("payments", []).append(dlg.result)
             self._after_change(c)
 
-    def _sel_pay_idx(self):
-        sel = self.pay_tree.selection()
+    def _sel_idx(self, tree, what):
+        sel = tree.selection()
         if not sel:
-            messagebox.showinfo("Select a payment", "Select a payment in the table first.")
+            messagebox.showinfo("Select a row", "Select a %s in the table first." % what)
             return None
         return int(sel[0])
 
@@ -1108,11 +1122,11 @@ class XplanApp(tk.Tk):
         c = self.selected_client
         if not c:
             return
-        idx = self._sel_pay_idx()
+        idx = self._sel_idx(self.pay_tree, "payment")
         if idx is None:
             return
         dlg = PaymentDialog(self, self.data["payment_methods"], self.currency,
-                            payment=c["payments"][idx], title="Edit Payment")
+                            payment=c["payments"][idx], title="Edit Payment from Client")
         if dlg.result:
             c["payments"][idx] = dlg.result
             self._after_change(c)
@@ -1121,32 +1135,45 @@ class XplanApp(tk.Tk):
         c = self.selected_client
         if not c:
             return
-        idx = self._sel_pay_idx()
+        idx = self._sel_idx(self.pay_tree, "payment")
         if idx is None:
             return
         if messagebox.askyesno("Delete payment", "Delete the selected payment?"):
             del c["payments"][idx]
             self._after_change(c)
 
-    def add_extra(self):
+    # ---- commission (from contractor) actions -------------------------- #
+    def add_commission(self):
         c = self.selected_client
         if not c:
             return
-        dlg = ExtraDialog(self, self.data["payment_methods"], self.currency)
+        dlg = CommissionDialog(self, self.data["payment_methods"], self.currency)
         if dlg.result:
-            c.setdefault("extras", []).append(dlg.result)
+            c.setdefault("commissions", []).append(dlg.result)
             self._after_change(c)
 
-    def delete_extra(self):
+    def edit_commission(self):
         c = self.selected_client
         if not c:
             return
-        sel = self.ex_tree.selection()
-        if not sel:
-            messagebox.showinfo("Select an item", "Select an extra item first.")
+        idx = self._sel_idx(self.com_tree, "commission")
+        if idx is None:
             return
-        if messagebox.askyesno("Delete item", "Delete the selected extra item?"):
-            del c["extras"][int(sel[0])]
+        dlg = CommissionDialog(self, self.data["payment_methods"], self.currency,
+                               item=c["commissions"][idx], title="Edit Contractor Commission")
+        if dlg.result:
+            c["commissions"][idx] = dlg.result
+            self._after_change(c)
+
+    def delete_commission(self):
+        c = self.selected_client
+        if not c:
+            return
+        idx = self._sel_idx(self.com_tree, "commission")
+        if idx is None:
+            return
+        if messagebox.askyesno("Delete commission", "Delete the selected commission?"):
+            del c["commissions"][idx]
             self._after_change(c)
 
     def _after_change(self, c):
@@ -1175,6 +1202,7 @@ class XplanApp(tk.Tk):
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="Set currency symbol…", command=self.set_currency)
         menu.add_command(label="Export to Excel…", command=self.export_excel)
+        menu.add_command(label="Restore data from file…", command=self.restore_from_file)
         menu.add_command(label="Open data folder", command=self.open_data_folder)
         menu.add_separator()
         menu.add_command(label="About", command=self.show_about)
@@ -1182,6 +1210,39 @@ class XplanApp(tk.Tk):
             menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
         finally:
             menu.grab_release()
+
+    def restore_from_file(self):
+        """Load clients/methods/currency from a chosen xplan_data.json.
+        Keeps the current password so the lock stays in place."""
+        path = filedialog.askopenfilename(title="Restore data from file",
+                                          filetypes=[("XPLAN data", "*.json"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                incoming = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Restore failed", "Could not read that file:\n%s" % e)
+            return
+        if "clients" not in incoming:
+            messagebox.showwarning("Not an XPLAN file", "That file has no 'clients' data.")
+            return
+        if not messagebox.askyesno("Restore data",
+                                   "Replace all current clients with the %d client(s) in that file?"
+                                   % len(incoming.get("clients", []))):
+            return
+        keep_pw = self.data.get("password")
+        self.data["clients"] = incoming.get("clients", [])
+        self.data["payment_methods"] = incoming.get("payment_methods", self.data["payment_methods"])
+        self.data["currency"] = incoming.get("currency", self.data["currency"])
+        self.data["password"] = keep_pw
+        self.data = load_data_normalize(self.data)
+        self.selected_client = None
+        self.save(silent=True)
+        self.refresh_client_tree()
+        self.refresh_charts()
+        self._build_detail_empty()
+        messagebox.showinfo("Restored", "Loaded %d client(s)." % len(self.data["clients"]))
 
     def set_currency(self):
         val = simpledialog.askstring("Currency", "Currency symbol (e.g. €, $, L, ALL):",
@@ -1194,7 +1255,6 @@ class XplanApp(tk.Tk):
             if self.selected_client:
                 self._build_detail(self.selected_client)
 
-    # ---- save / misc ---------------------------------------------------- #
     def save(self, silent=False):
         try:
             save_data(self.data)
@@ -1210,7 +1270,7 @@ class XplanApp(tk.Tk):
             self.destroy()
 
     def open_data_folder(self):
-        folder = app_dir()
+        folder = DATA_DIR
         try:
             if sys.platform.startswith("win"):
                 os.startfile(folder)             # noqa
@@ -1226,10 +1286,10 @@ class XplanApp(tk.Tk):
                             "XPLAN — Client & Payment Manager\n\n"
                             "Password-protected. Data stored locally in:\n%s\n\n"
                             "Backups are kept in the 'backups' folder.\n\n"
-                            "Vlera e Kontratës = Contract · Pagesa = Payment\n"
-                            "Të Dhëna = Paid · Të Mbetura = Remaining" % DATA_FILE)
+                            "Payments from client vs commissions from contractors.\n"
+                            "Vlera = Contract · Të Dhëna = Paid · Të Mbetura = Remaining" % DATA_FILE)
 
-    # ---- Excel / CSV export --------------------------------------------- #
+    # ---- Excel / CSV ---------------------------------------------------- #
     def export_excel(self):
         try:
             import openpyxl  # noqa
@@ -1238,8 +1298,7 @@ class XplanApp(tk.Tk):
                                    "Excel export needs 'openpyxl' (not installed).\n\nExport as CSV instead?"):
                 self._export_csv()
             else:
-                messagebox.showinfo("Install openpyxl",
-                                    "Run in Command Prompt:\n\n    pip install openpyxl")
+                messagebox.showinfo("Install openpyxl", "Run in Command Prompt:\n\n    pip install openpyxl")
             return
         path = filedialog.asksaveasfilename(title="Export to Excel", defaultextension=".xlsx",
                                             initialfile="XPLAN_clients.xlsx",
@@ -1260,33 +1319,44 @@ class XplanApp(tk.Tk):
         ws = wb.active
         ws.title = "TOTALI"
         bold = Font(bold=True)
-        ws.append(["YEAR", "KLIENTI", "VLERA E KONTRATES", "TE DHENA", "TE MBETURA"])
+        ws.append(["YEAR", "KLIENTI", "VLERA E KONTRATES", "PAID BY CLIENT",
+                   "CONTRACTOR COMMISSIONS", "TOTAL RECEIVED", "TE MBETURA"])
         for cell in ws[1]:
             cell.font = bold
         for c in sorted(self.data["clients"], key=lambda x: (client_year(x) or 0, x["name"].lower())):
             ws.append([client_year(c) or "", c["name"], to_float(c.get("contract_value")),
-                       total_received_of(c), remaining_of(c)])
+                       paid_of(c), commissions_of(c), total_received_of(c), remaining_of(c)])
         ws.append([])
-        ws.append(["", "TOTAL", sum(to_float(c.get("contract_value")) for c in self.data["clients"]),
+        ws.append(["", "TOTAL",
+                   sum(to_float(c.get("contract_value")) for c in self.data["clients"]),
+                   sum(paid_of(c) for c in self.data["clients"]),
+                   sum(commissions_of(c) for c in self.data["clients"]),
                    sum(total_received_of(c) for c in self.data["clients"]),
                    sum(remaining_of(c) for c in self.data["clients"])])
         for cell in ws[ws.max_row]:
             cell.font = bold
-        # payments-by-month sheet
+        for col, wdt in zip("ABCDEFG", (8, 26, 16, 14, 18, 15, 13)):
+            ws.column_dimensions[col].width = wdt
+
         pm = wb.create_sheet("PAGESAT")
-        pm.append(["YEAR", "MONTH", "AMOUNT"])
+        pm.append(["YEAR", "MONTH", "TYPE", "AMOUNT"])
         for cell in pm[1]:
             cell.font = bold
         agg = {}
         for c in self.data["clients"]:
-            for p in iter_money_items(c, True):
+            for p in c.get("payments", []):
                 y, m = parse_date(p.get("date"))
                 if y and m:
-                    agg[(y, m)] = agg.get((y, m), 0.0) + to_float(p.get("amount"))
-        for (y, m) in sorted(agg):
-            pm.append([y, MONTHS[m - 1], agg[(y, m)]])
-        for col, wdt in zip("ABCDE", (10, 26, 18, 14, 14)):
-            ws.column_dimensions[col].width = wdt
+                    agg[(y, m, "Client payment")] = agg.get((y, m, "Client payment"), 0.0) + to_float(p.get("amount"))
+            for e in c.get("commissions", []):
+                y, m = parse_date(e.get("date"))
+                if y and m:
+                    agg[(y, m, "Commission")] = agg.get((y, m, "Commission"), 0.0) + to_float(e.get("amount"))
+        for (y, m, t) in sorted(agg):
+            pm.append([y, MONTHS[m - 1], t, agg[(y, m, t)]])
+        for col, wdt in zip("ABCD", (8, 10, 16, 14)):
+            pm.column_dimensions[col].width = wdt
+
         used = {"TOTALI", "PAGESAT"}
         for c in self.data["clients"]:
             title = (c["name"] or "Client")[:28]
@@ -1296,21 +1366,24 @@ class XplanApp(tk.Tk):
                 title = "%s_%d" % (base[:26], n)
             used.add(title)
             s = wb.create_sheet(title)
-            s.append([c["name"]])
+            s.append([c["name"], "", "", "Contract:", to_float(c.get("contract_value"))])
             s["A1"].font = bold
-            s.append(["TYPE", "DATA", "SHUMA", "METODA", "SHENIM"])
+            s.append(["CATEGORY", "NAME", "DATE", "AMOUNT", "METHOD", "NOTE"])
             for cell in s[2]:
                 cell.font = bold
             for p in c.get("payments", []):
-                s.append(["Pagesë", p.get("date", ""), to_float(p.get("amount")),
+                s.append(["Client payment", c["name"], p.get("date", ""), to_float(p.get("amount")),
                           p.get("method", ""), p.get("note", "")])
-            for e in c.get("extras", []):
-                s.append([e.get("name", "Ekstra"), e.get("date", ""),
-                          to_float(e.get("amount")), e.get("method", ""), "ekstra"])
+            for e in c.get("commissions", []):
+                s.append(["Contractor commission", e.get("name", ""), e.get("date", ""),
+                          to_float(e.get("amount")), e.get("method", ""), e.get("note", "")])
             s.append([])
-            s.append(["VLERA E KONTRATES", "", to_float(c.get("contract_value"))])
-            s.append(["TE DHENA", "", total_received_of(c)])
-            s.append(["TE MBETURA", "", remaining_of(c)])
+            s.append(["", "PAID BY CLIENT", "", paid_of(c)])
+            s.append(["", "COMMISSIONS", "", commissions_of(c)])
+            s.append(["", "TOTAL RECEIVED", "", total_received_of(c)])
+            s.append(["", "REMAINING", "", remaining_of(c)])
+            for col, wdt in zip("ABCDEF", (22, 20, 12, 12, 14, 18)):
+                s.column_dimensions[col].width = wdt
         wb.save(path)
 
     def _export_csv(self):
@@ -1322,17 +1395,18 @@ class XplanApp(tk.Tk):
         try:
             with open(path, "w", newline="", encoding="utf-8-sig") as f:
                 w = csv.writer(f)
-                w.writerow(["Year", "Client", "Contract", "Type", "Date", "Amount", "Method", "Note"])
+                w.writerow(["Year", "Client", "Contract", "Category", "Name", "Date", "Amount", "Method", "Note"])
                 for c in self.data["clients"]:
                     yr = client_year(c) or ""
-                    if not c.get("payments") and not c.get("extras"):
-                        w.writerow([yr, c["name"], to_float(c.get("contract_value")), "", "", "", "", ""])
                     for p in c.get("payments", []):
-                        w.writerow([yr, c["name"], to_float(c.get("contract_value")), "Payment",
+                        w.writerow([yr, c["name"], to_float(c.get("contract_value")), "Client payment", c["name"],
                                     p.get("date", ""), to_float(p.get("amount")), p.get("method", ""), p.get("note", "")])
-                    for e in c.get("extras", []):
-                        w.writerow([yr, c["name"], to_float(c.get("contract_value")), "Extra",
-                                    e.get("date", ""), to_float(e.get("amount")), e.get("method", ""), e.get("name", "")])
+                    for e in c.get("commissions", []):
+                        w.writerow([yr, c["name"], to_float(c.get("contract_value")), "Contractor commission",
+                                    e.get("name", ""), e.get("date", ""), to_float(e.get("amount")),
+                                    e.get("method", ""), e.get("note", "")])
+                    if not c.get("payments") and not c.get("commissions"):
+                        w.writerow([yr, c["name"], to_float(c.get("contract_value")), "", "", "", "", "", ""])
             messagebox.showinfo("Exported", "Saved:\n%s" % path)
         except Exception as e:
             messagebox.showerror("Export failed", str(e))

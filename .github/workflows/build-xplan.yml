@@ -1,0 +1,29 @@
+name: Build XPLAN Windows exe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/**"]
+    paths: ["XPLAN/**", ".github/workflows/build-xplan.yml"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: XPLAN
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: python -m pip install --upgrade pyinstaller openpyxl
+      - name: Build single-file exe
+        run: pyinstaller --onefile --windowed --name XPLAN xplan.py
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: XPLAN-windows-exe
+          path: XPLAN/dist/XPLAN.exe
+          if-no-files-found: error
